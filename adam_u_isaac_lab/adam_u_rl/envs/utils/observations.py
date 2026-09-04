@@ -1,18 +1,21 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Observation terms for the Isaac Lab 3.0 port.
+
+Same function bodies as adam_u_rl/envs/utils/observations.py -- they only touch
+`env.scene[...].data`, which is stable across versions. The 2.3 module also
+imported `isaaclab.envs.mdp.actions_cfg` and `JointAction` at module scope and
+never used them; those paths are not stable in 3.0, so they are gone.
+"""
+
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING
 
-# if TYPE_CHECKING:
 from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab.envs.mdp import actions_cfg
-import isaaclab.envs.mdp as mdp
-from isaaclab.envs.mdp.actions import JointAction
 
 def object_obs(
     env: ManagerBasedRLEnv,

@@ -3,7 +3,18 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Adam-U机器人抓取任务的强化学习环境配置 - 完整修复版"""
+"""Adam-U grasping env config for Isaac Lab 3.0 / Isaac Sim 6.0.
+
+Derived mechanically from adam_u_rl/envs/adam_u_grasp_env_cfg.py so the scene,
+action space, observation terms and reward terms are IDENTICAL. That is what
+makes a policy trained on the 5.1 side runnable here. Only the version-specific
+parts differ: the robot spawns from a pre-converted flat USD instead of the
+URDF, `configclass` moved, and the unused IK imports are dropped.
+
+Keep the two files in sync. If you change a reward or an observation here and
+not there, an exported policy will silently receive a different observation
+vector -- scripts/play.py checks the dimension, but not the semantics.
+"""
 
 import os
 import sys
@@ -11,18 +22,18 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Repo root, derived from this file rather than the process working directory.
-# Upstream used the relative path "assets/robots/..." for the URDF, which only
-# resolved when the script happened to be launched from the repo root.
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ADAM_U_ASSETS = os.environ.get("ADAM_U_ASSETS", os.path.join(REPO_ROOT, "assets"))
-ADAM_U_URDF = os.path.join(ADAM_U_ASSETS, "robots", "adam_u", "urdf", "adam_u.urdf")
 
-# Isaac Lab converts the URDF to USD on every env creation, and with usd_dir
-# unset it writes to a fresh random /tmp directory each time -- so a 44-link,
-# 47-mesh robot is re-imported on every launch. Pointing it at a stable
-# directory makes the conversion hash-cached and later starts much faster.
-ADAM_U_USD_CACHE = os.environ.get(
-    "ADAM_U_USD_CACHE", os.path.join(REPO_ROOT, ".cache", "usd", "adam_u")
+# Isaac Lab 3.0 loads a PRE-CONVERTED USD, not the URDF. 3.0's URDF importer
+# nests rigid bodies under the kinematic tree, so the explicit prim paths this
+# env uses for its three FrameTransformers -- {ENV_REGEX_NS}/Robot/waistRoll,
+# .../R_thumb_distal, .../R_pinky_distal -- stop resolving, and every distance
+# reward silently loses its frames. The USD emitted by Isaac Lab 2.3.2's
+# converter is flat (all 44 bodies directly under the default prim), which both
+# versions read. Generate it with tools/export_usd.py in the 5.1 image.
+ADAM_U_USD = os.environ.get(
+    "ADAM_U_USD", os.path.join(ADAM_U_ASSETS, "robots", "adam_u", "usd", "adam_u.usd")
 )
 
 import math
@@ -43,25 +54,17 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg
 from isaaclab.sensors import FrameTransformer
 from isaaclab.sensors import FrameTransformerCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.utils.math import quat_apply
-from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
-from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
-from isaaclab.envs.mdp.actions.pink_actions_cfg import PinkInverseKinematicsActionCfg
-# Isaac Lab 2.3 moved this into a `pink_ik` subpackage; upstream's
-# `isaaclab.controllers.pink_ik_cfg` path is 2.2-era and no longer resolves.
-from isaaclab.controllers.pink_ik import PinkIKControllerCfg
-from pink.tasks import FrameTask
 
 # 导入MDP函数
 import isaaclab.envs.mdp as mdp
-from envs.utils.observations import *
+from adam_u_rl.envs.utils.observations import *
 
 ##
 # 自定义MDP函数
@@ -116,6 +119,22 @@ def compute_joint_vel_penalty(env, asset_cfg: SceneEntityCfg):
     joint_vel = env.scene["robot"].data.joint_vel[:, asset_cfg.joint_ids]
     return -torch.sum(torch.square(joint_vel), dim=1)
 
+
+# ---------------------------------------------------------------------------
+# QUATERNION ORDER CHANGED IN ISAAC LAB 3.0.
+#
+#   2.3.2:  InitialStateCfg.rot = (w, x, y, z), default (1, 0, 0, 0)
+#   3.0:    InitialStateCfg.rot = (x, y, z, w), default (0, 0, 0, 1)
+#
+# So the 2.3.2 value (0.707, 0, 0, 0.707) -- 90 deg about Z -- is read by 3.0
+# as x=0.707, w=0.707, i.e. 90 deg about X, and the robot spawns tipped onto
+# its side with the right hand BELOW the 1.025 m table surface. It still
+# trains, just on a different physical problem: hand_height came out at
+# -0.657 versus -0.037 on 2.3.2.
+#
+# Every rot in this file is therefore written (x, y, z, w).
+# ---------------------------------------------------------------------------
+
 ##
 # 场景配置
 ##
@@ -129,7 +148,7 @@ class AdamUGraspSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/TableTop",
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=[0.0, 0.0, 1.0], 
-            rot=[1.0, 0.0, 0.0, 0.0]
+            rot=[0.0, 0.0, 0.0, 1.0]  # identity, (x,y,z,w)
         ),
         spawn=sim_utils.CuboidCfg(
             size=(0.6, 0.5, 0.05),
@@ -155,7 +174,7 @@ class AdamUGraspSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/TableLeg",
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=[0.0, 0.0, 0.5], 
-            rot=[1.0, 0.0, 0.0, 0.0]
+            rot=[0.0, 0.0, 0.0, 1.0]  # identity, (x,y,z,w)
         ),
         spawn=sim_utils.CylinderCfg(
             radius=0.03,
@@ -176,7 +195,7 @@ class AdamUGraspSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Object",
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=[0.0, 0.0, 1.05],  # 放在桌子上，z=0.8
-            rot=[1, 0, 0, 0]
+            rot=[0.0, 0.0, 0.0, 1.0]  # identity, (x,y,z,w)
         ),
         spawn=sim_utils.CuboidCfg(
             size=(0.05, 0.05, 0.05),  # 5cm 立方体
@@ -200,28 +219,22 @@ class AdamUGraspSceneCfg(InteractiveSceneCfg):
     # Adam_U 机器人配置
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=sim_utils.UrdfFileCfg(
-            asset_path=ADAM_U_URDF,
-            usd_dir=ADAM_U_USD_CACHE,
-            usd_file_name="adam_u.usd",
-            fix_base=True,
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=ADAM_U_USD,
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True, solver_position_iteration_count=8, solver_velocity_iteration_count=0
-            ),
-            joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
-                drive_type="force",
-                target_type="position",
-                gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=None, damping=None)
+                enabled_self_collisions=True,
+                solver_position_iteration_count=8,
+                solver_velocity_iteration_count=0,
             ),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, -0.4, 1.0),
-            rot=(0.707, 0.0, 0.0, 0.707),
+            rot=(0.0, 0.0, 0.707, 0.707),  # 90 deg about Z, (x,y,z,w) -- see note above
             joint_pos={
                 # 腰部关节
                 "waistRoll": 0.0,
@@ -624,7 +637,10 @@ class AdamUGraspEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.device = "cuda:0"
         
         # 渲染设置
-        self.sim.disable_contact_processing = False
+        # `disable_contact_processing` was removed from SimulationCfg in some
+        # 3.0 revisions; set it only if this build still has it.
+        if hasattr(self.sim, "disable_contact_processing"):
+            self.sim.disable_contact_processing = False
         marker_cfg = FRAME_MARKER_CFG.copy()
         marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
         marker_cfg.prim_path = "/Visuals/FrameTransformer"

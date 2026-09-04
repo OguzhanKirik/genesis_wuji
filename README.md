@@ -1,11 +1,12 @@
 # Adam-U RL
 
-Reinforcement learning for the PNDbotics **Adam-U** (44-link, 43-DoF humanoid
-with two 12-DoF Inspire hands) in Isaac Lab.
+Reinforcement learning for the PNDbotics **Adam-U** (44 links, 43 DoF: a torso,
+two 7-DoF arms and two 12-DoF Inspire hands on a `lifting_Columns` base) in
+Isaac Lab.
 
 The task is **right-arm grasping**: lift a 5 cm cube off a table. This is
 manipulation, not locomotion — the sibling repo `adam-wbc` covers whole-body
-locomotion for Adam Lite, and this repo copies its Docker structure.
+locomotion for Adam Lite, and this repo started from its Docker structure.
 
 Upstream is [pndbotics/adam_u_isaac_lab](https://github.com/pndbotics/adam_u_isaac_lab),
 vendored at `bc84036` under `adam_u_isaac_lab/`. Upstream calls itself "a
@@ -13,313 +14,234 @@ minimal example ... simplified for clarity and should be re-designed for
 production research" — take that at face value; see
 [What upstream gives you](#what-upstream-gives-you-and-what-it-does-not).
 
-## Layout
+## One environment
 
-```
-Dockerfile                  Isaac Sim 5.1 / Isaac Lab 2.3.2  -- TRAINING
-Dockerfile.viz              Isaac Sim 6.0 / Isaac Lab 3.0     -- VISUALIZATION
-docker-compose.yml          services `adam_rl` and `adam_rl30`
-docker/
-  requirements.lock.txt     297 pins, frozen from a verified 5.1 environment
-  requirements.viz.lock.txt 258 pins, frozen from a verified 6.0 environment
-  entrypoint.sh             CUDA preflight + mesh repair on the bind mount
-  entrypoint.viz.sh         CUDA preflight + USD and X11 preflight
-tools/
-  sanitize_dae.py           makes the Collada meshes legal for USD import
-  export_usd.py             URDF -> flat USD, for the 3.0 side (run on 5.1)
-adam_u_isaac_lab/           vendored upstream (see git history for the delta)
-  adam_u_rl/                the 2.3.2 training package
-    envs/adam_u_grasp_env_cfg.py    scene, actions, observations, rewards
-    envs/utils/observations.py      end-effector pose observation terms
-    algos/rsl_rl/rsl_rl_ppo_cfg.py  PPO hyperparameters
-    scripts/train.py, play.py       entry points
-  adam_u_rl30/              the 3.0 visualization package, same task
-    envs/adam_u_grasp_env_cfg.py    derived from the 2.3.2 one, USD spawn
-    algos/rsl_rl/rsl_rl_ppo_cfg.py  rsl-rl 5.x actor/critic schema
-    scripts/play.py                 the viewer; train.py trains natively
-  assets/robots/adam_u/     URDF + 33 DAE + 14 STL meshes (sanitized)
-    usd/                    generated flat USD (gitignored, ~104 MB)
-  logs/                     checkpoints and tensorboard runs (gitignored)
-  .cache/usd/               URDF->USD conversion cache (gitignored)
-```
-
-The repo is standalone: nothing outside it is needed to build or run, and the
-git history is three commits — pristine upstream, the mesh fix, then the port.
-`git log -p` is the record of everything changed and why.
-
-## Environment
+Isaac Sim **6.0** / Isaac Lab **3.0**, which both trains and renders.
 
 | | |
 |---|---|
 | GPU | RTX PRO 6000 Blackwell, 96 GB, sm_120 |
-| Python | 3.11 (Ubuntu 24.04 ships only 3.12) |
-| torch | 2.7.0+cu128 — includes sm_120 |
-| Isaac Sim | 5.1.0 · Isaac Lab 2.3.2 · rsl-rl-lib 3.0.1 |
+| Python | 3.12 |
+| torch | 2.10.0+cu128 — includes sm_120 |
+| Isaac Sim | 6.0.0.1 |
+| Isaac Lab | 3.0, commit `28a37ce` (**beta**) |
+| rsl-rl-lib | 5.0.1 |
+| numpy | 2.5.2 |
 
-Upstream targets Isaac Sim 5.0. This repo runs 5.1 because that is the stack
-already verified on this card in `adam-wbc`, and because Isaac Sim 5.0's torch
-pin predates sm_120. Moving up one minor version is what the
-[port](#the-port-to-isaac-lab-232) below is about.
+Isaac Sim **5.1 cannot render on this card** — it segfaults at 2.64 s in
+`librtx.scenedb.plugin.so!carbOnPluginStartup`, reproduced here and in
+`adam-wbc`. 6.0 renders on the same card (`app ready` in ~9 s). Since 5.1 could
+never show you anything, 6.0 is the only version that does both jobs, so it is
+the only one kept. The repo briefly carried a second 5.1 / Isaac Lab 2.3.2
+training image; it is in git history, and two things it left behind still
+matter — the [committed USD](#the-usd-is-committed-on-purpose) and the
+[quaternion fix](#gotchas-that-cost-real-time).
+
+Isaac Lab 3.0 is beta and its release notes warn of continuing breaking
+changes. Expect this to need repair on update; this repo's git history is a
+worked example of what that looks like.
+
+## Layout
+
+```
+Dockerfile                  Isaac Sim 6.0 / Isaac Lab 3.0
+docker-compose.yml          one service, `adam_rl`
+docker/
+  requirements.lock.txt     258 pins, frozen from a verified environment
+  entrypoint.sh             CUDA, USD and X11 preflight
+tools/
+  sanitize_dae.py           makes the Collada meshes legal for USD import
+  compare_pose.py           checks the robot spawns upright  <- run after any
+                            change to init_state or the USD
+  export_usd.py             URDF -> flat USD (needs the 2.3.2 image; history)
+  probe_urdf_30.py          shows why 3.0 cannot import this URDF directly
+adam_u_isaac_lab/
+  adam_u_rl/
+    envs/adam_u_grasp_env_cfg.py    scene, actions, observations, rewards
+    envs/utils/observations.py      end-effector pose observation terms
+    algos/rsl_rl/rsl_rl_ppo_cfg.py  PPO hyperparameters (rsl-rl 5.x schema)
+    scripts/train.py, play.py       entry points
+  assets/robots/adam_u/
+    urdf/, meshes/          URDF + 33 DAE + 14 STL (meshes sanitized)
+    usd/                    committed flat USD -- what actually gets spawned
+  logs/                     checkpoints and tensorboard runs (gitignored)
+```
+
+The repo is standalone: nothing outside it is needed to build or run.
+`git log -p` is the record of every change and why.
 
 ## Quick start
 
 ```bash
-docker compose build            # ~20 min, ~25 GB image
+cd /home/revel/adam-rl
+docker compose build            # ~20 min; the final image export is slow, not hung
+xhost +local:root               # once per login, for the GUI
+
 docker compose up -d
 docker compose exec adam_rl bash
+```
 
+Then, inside:
+
+```bash
 # 30 s sanity check
-python adam_u_rl/scripts/train.py --headless --num_envs 16 --max_iterations 3
+python adam_u_rl/scripts/train.py --num_envs 16 --max_iterations 3
 
-# real run
-python adam_u_rl/scripts/train.py --headless --num_envs 4096
+# real run, headless
+python adam_u_rl/scripts/train.py --num_envs 4096
+
+# train with the RTX viewport open
+python adam_u_rl/scripts/train.py --viz kit --num_envs 16
+
+# watch a trained policy
+python adam_u_rl/scripts/play.py --viz kit --num_envs 4 --real-time \
+    --checkpoint_path logs/rsl_rl/adam_u30_grasp/<run>/model_1499.pt
+
+# confirm the robot spawns upright
+python /opt/tools/compare_pose.py
 ```
 
 Or one-shot, without leaving a container behind:
 
 ```bash
-docker compose run --rm adam_rl \
-    python adam_u_rl/scripts/train.py --headless --num_envs 4096
+docker compose run --rm adam_rl python adam_u_rl/scripts/train.py --num_envs 4096
 ```
 
-Checkpoints land on the host in `adam_u_isaac_lab/logs/rsl_rl/adam_u_grasp/<timestamp>/`,
-every 50 iterations. Watch them with:
+Checkpoints land on the host in
+`adam_u_isaac_lab/logs/rsl_rl/adam_u30_grasp/<timestamp>/`, every 50 iterations.
 
 ```bash
-tensorboard --logdir adam_u_isaac_lab/logs/rsl_rl/adam_u_grasp
+tensorboard --logdir adam_u_isaac_lab/logs/rsl_rl
 ```
 
-Replay a checkpoint (headless — see the renderer note below):
-
-```bash
-python adam_u_rl/scripts/play.py --headless --num_envs 4 \
-    --checkpoint_path logs/rsl_rl/adam_u_grasp/<run>/model_1499.pt
-```
-
-`play.py` also writes TorchScript and ONNX exports next to the checkpoint, in
-`exported/`.
-
-## Verified
-
-`docker compose build` then 3 iterations at 16 envs, on this machine:
-
-```
-rigid bodies    44        matches the URDF exactly -- this is the check that
-movable joints  43        proves the mesh fix worked; unsanitized it is 0
-Mean reward     1.21 -> 1.96 -> 3.69   over iterations 0..2
-Episode_Reward/distance_to_object      0.2438   thumb+pinky frames resolve
-Episode_Reward/hand_height            -0.0369   wrist frame resolves
-Episode_Reward/object_height           0.0000   nothing lifted in 3 iterations
-Computation      460 steps/s at 16 envs  (per-step overhead dominates; scale up)
-```
-
-`object_height` staying at 0 is expected this early — it is the metric that
-matters, so watch it rather than the total.
-
-Two things to know about the filesystem: the container runs as root, so
-`logs/` and `.cache/usd/` come back root-owned on the host (same as adam-wbc's
-`logs/sonic_eval/`), and the USD cache writes a 109 MB `adam_u_base.usd` on
-first run, after which `.asset_hash` makes the conversion a no-op.
-
-## Watching a policy (Isaac Sim 6.0)
-
-Isaac Sim 5.1 cannot render on this card, so visualization lives in a second,
-fully separate environment — the same split adam-wbc ended up with. Six
-pairwise version conflicts make one shared environment impossible:
-
-|              | `adam_rl` (training) | `adam_rl30` (visualization) |
-|--------------|----------------------|------------------------------|
-| Python       | 3.11                 | 3.12                         |
-| Isaac Sim    | 5.1.0                | 6.0.0.1                      |
-| Isaac Lab    | 2.3.2                | 3.0 (commit `28a37ce`, beta) |
-| torch        | 2.7.0+cu128          | 2.10.0+cu128                 |
-| rsl-rl-lib   | 3.0.1                | 5.0.1                        |
-| numpy        | 1.26.4 (<2)          | 2.5.2 (>=2)                  |
-| RTX / GUI    | segfaults            | **works**                    |
-| Package      | `adam_u_rl`          | `adam_u_rl30`                |
-| Experiment   | `adam_u_grasp`       | `adam_u30_grasp`             |
-
-Headless production training belongs on `adam_rl`. Isaac Lab 3.0 is beta and
-its release notes warn of continuing breaking changes — expect `adam_rl30` to
-need repair on update. That is the reason training stays on 5.1.
-
-### One-time setup
-
-```bash
-# 1. the 3.0 side loads a pre-converted flat USD; generate it from the 5.1 image
-docker compose run --rm adam_rl python /opt/tools/export_usd.py
-
-# 2. build the visualization image
-docker compose build adam_rl30
-
-# 3. let the container reach your X server (once per login)
-xhost +local:root
-```
-
-### Watching
-
-Checkpoints are **not** interchangeable — rsl-rl 4.0 split the `policy` model
-config into separate `actor` and `critic`, so a 5.1 checkpoint cannot load
-under 5.0.1. The bridge is the TorchScript export, which bakes the observation
-normalizer and the actor MLP into one module (`forward(x) = actor(normalizer(x))`)
-with no rsl-rl involvement on either side.
-
-```bash
-# on the 5.1 side: writes <run>/exported/policy.pt (and .onnx)
-docker compose run --rm adam_rl python adam_u_rl/scripts/play.py --headless \
-    --checkpoint_path logs/rsl_rl/adam_u_grasp/<run>/model_300.pt
-
-# on the 6.0 side: watch it
-docker compose run --rm adam_rl30 python adam_u_rl30/scripts/play.py \
-    --viz kit --num_envs 4 --real-time \
-    --policy logs/rsl_rl/adam_u_grasp/<run>/exported/policy.pt
-```
-
-`play.py` checks that the policy's input width matches the env's observation
-width and refuses to run on a mismatch, because the failure mode otherwise is
-a policy that renders convincingly while acting on garbage. If you edit an
-observation term in one env config, edit it in the other.
-
-Isaac Lab 3.0 replaced `--headless` with `--viz`: omit it for headless, or pass
-a CSV of backends.
+`--viz` takes a CSV of backends; omit it for headless.
 
 | `--viz` | notes |
 |---|---|
-| `kit` | RTX viewport |
-| `newton` | Newton's viewer |
+| *(omitted)* | headless — use this for real training runs |
+| `kit` | RTX viewport. Verified working on this card |
+| `newton` | Newton's own viewer |
 | `rerun` | bypasses RTX entirely |
 | `viser` | browser-based, so it also works from another machine |
 
-`rerun` and `viser` are worth knowing about: both skip RTX, so they are the
-fallback if `kit` ever regresses on this card the way 5.1 did. Neither was in
-adam-wbc's 6.0 environment; they are pinned into this one deliberately.
+`rerun` and `viser` are pinned deliberately: both skip RTX, so they are the
+fallback if `kit` ever regresses the way 5.1 did.
 
-### Training natively on 3.0
+Render 16 envs, not 4096. Drawing thousands of robots is slow and unreadable —
+train big headless, watch small.
 
-`adam_u_rl30/scripts/train.py` trains the same task on the rsl-rl 5.x schema,
-so the viz environment is not read-only. Unlike the 5.1 script, its `--resume`
-actually works.
+## Verified
 
-```bash
-docker compose run --rm adam_rl30 python adam_u_rl30/scripts/train.py \
-    --num_envs 4096                       # headless
-docker compose run --rm adam_rl30 python adam_u_rl30/scripts/train.py \
-    --viz kit --num_envs 16                # watch it learn
+On this machine:
+
+```
+robot spawns upright   waistRoll world_z 1.07670, wristRollRight 1.01262
+                       (matches the 2.3.2 reference to within 5 mm)
+articulation           44 rigid bodies, 43 joints
+observations           70,  actions 19  (7 arm + 12 right-hand fingers)
+GUI                    --viz kit, "app ready" in 9.1 s, trains with viewport open
+training               reward 1.21 -> 2.34 -> 2.91 -> 3.65 -> 4.15 over 5 iters
 ```
 
-## The port to Isaac Lab 2.3.2
+Iteration 0 gives **1.21 on both** Isaac Lab 3.0 and the retired 2.3.2 setup —
+same random policy, same physics — which is the evidence that the port is
+faithful and not merely running.
 
-Upstream runs on Isaac Sim 5.0 / Isaac Lab 2.2 / rsl-rl 2.x. Seven changes
-were needed for 5.1 / 2.3.2 / rsl-rl 3.0.1.
-
-**`obs_groups` is now required.** `RslRlBaseRunnerCfg.obs_groups` is `MISSING`
-by default, and `OnPolicyRunner.__init__` reads `cfg["obs_groups"]` before the
-first step. Left unset, training dies in `resolve_obs_groups()`. This env
-publishes only a `policy` group, so the critic shares it:
-`{"policy": ["policy"], "critic": ["policy"]}`.
-
-**`actor_obs_normalization` / `critic_obs_normalization` are new and also
-`MISSING`.** Both are set to `True`, which is more than a compile fix: this
-observation vector mixes object positions (~1 m) with joint velocities (~1e-2),
-so an unnormalized critic is badly conditioned.
-
-**`get_observations()` returns a `TensorDict`, not `(obs, extras)`.**
-`play.py`'s `obs, _ = env.get_observations()` silently unpacked dictionary
-*keys* instead of failing cleanly.
-
-**The empirical normalizer moved from the runner onto the policy.**
-`runner.obs_normalizer` no longer exists in rsl-rl 3.x; it is
-`runner.alg.policy.actor_obs_normalizer`.
-
-**`play.py --video` could never be turned off.** It was declared
-`action="store_true", default=True`, and video forces `--enable_cameras`, i.e.
-the RTX renderer — which crashes on this GPU (below). Default is now off, with
-`--no-video` for scripts.
-
-**`isaaclab.controllers.pink_ik_cfg` moved.** In 2.3 it is a `pink_ik`
-subpackage, so upstream's 2.2-era path raises `ModuleNotFoundError` at import
-time — the first thing that actually stopped training here.
-
-**`envs/utils/__init__,py`** — a comma, not a dot. The directory only ever
-worked as an implicit namespace package, so the file's contents were dead code
-importing an `actions` module that does not exist in the repo. Renamed and
-trimmed to the one import that resolves.
-
-Two more changes are conveniences rather than fixes: the URDF path and the log
-directory are now derived from the repo layout instead of the process working
-directory (upstream only worked when launched from the repo root), and the
-URDF→USD conversion is cached — see below.
+A 300-iteration run on the retired 2.3.2 environment reached mean reward 30.81
+at 28,487 steps/s (19.7 M timesteps), with `distance_to_object` 1.85 of ~2.0
+and `object_height` **0.0139 of 5.0**. That is the headline result: the policy
+learns to reach the cube and then stops. See point 3 below.
 
 ## Gotchas that cost real time
 
-**The Collada meshes have USD-illegal ids.** All 33 `.dae` files, 280 ids:
-dots in node names (`L_middle_distal.001`), hyphens in mesh ids
-(`waistRoll-mesh`), and CJK material names (`灰色-material`, `黑色-effect`).
-USD prim names allow only `[A-Za-z0-9_]`, and Isaac Sim's URDF importer turns
-node and material names into prim names — so it produces a null prim and an
-articulation with **zero rigid bodies**, surfacing much later as a confusing
+**Quaternion order changed in Isaac Lab 3.0.** `InitialStateCfg.rot` is
+`(x, y, z, w)` in 3.0 and `(w, x, y, z)` in 2.3.2:
+
+```
+2.3.2   rot = (w, x, y, z)   default (1, 0, 0, 0)
+3.0     rot = (x, y, z, w)   default (0, 0, 0, 1)
+```
+
+Upstream's `rot=(0.707, 0, 0, 0.707)` is 90° about **Z** under 2.3.2 but 90°
+about **X** under 3.0 — so the robot spawns lying on its side, right hand
+*below* the 1.025 m table. It trains perfectly happily on the wrong physical
+problem: `hand_height` came out at **−0.657 instead of −0.037**, a 20× error,
+and total reward went *negative and decreasing* (−0.29 → −0.90) where it should
+climb. Nothing errors. `rot=[1,0,0,0]` on the table and cube is likewise a 180°
+flip about X, not identity — harmless only because both are symmetric.
+
+Every `rot` in the env config is now written `(x, y, z, w)` with a comment.
+**Run `tools/compare_pose.py` after touching `init_state` or the USD** — it
+prints the world height of the bodies the rewards read, which is how this was
+caught.
+
+**The Collada meshes have USD-illegal ids.** All 33 `.dae` files, 280 ids: dots
+in node names (`L_middle_distal.001`), hyphens in mesh ids (`waistRoll-mesh`),
+and CJK material names (`灰色-material`, `黑色-effect`). USD prim names allow
+only `[A-Za-z0-9_]`, and the URDF importer turns node and material names into
+prim names — so it produces a null prim and an articulation with **zero rigid
+bodies**, surfacing much later as a confusing
 
 ```
 ValueError: No contact sensors added to the prim: '.../Robot'.
             This means that no rigid bodies are present under this prim.
 ```
 
-Fixed in the second commit; `tools/sanitize_dae.py` is idempotent, so re-run it
-if the meshes are ever re-imported. The entrypoint re-checks the bind mount on
-every start, because a `git checkout -- .` brings the bad ids straight back.
-Adam Lite needed the identical fix in `adam-wbc`.
+Fixed in the second commit; `tools/sanitize_dae.py` is idempotent. Adam Lite
+needed the identical fix in `adam-wbc`.
 
-**Isaac Sim 5.1 cannot render on this GPU.** Reproduced in this image, not
-just inherited from `adam-wbc`: dropping `--headless` segfaults (exit 139) at
-2.64 s in `librtx.scenedb.plugin.so!carbOnPluginStartup`, after
-`omni.rtx.settings.core` starts up. X11 is fine — `DISPLAY=:1`, the socket is
-mounted, `xhost +local:root` granted — and it is not a Docker problem either;
-adam-wbc saw the same crash natively, and forcing the NVIDIA Vulkan ICD does
-not help. The RTX PRO 6000 Blackwell (sm_120) is simply newer than Isaac Sim
-5.1's renderer. Isaac Sim **6.0** renders on the same card.
+### The USD is committed on purpose
 
-`--livestream 1|2` does not get around it: WebRTC streaming still drives the
-same RTX renderer.
+Isaac Lab 3.0 **cannot import this URDF usably**. `tools/probe_urdf_30.py`
+measures it: all 44 bodies import, but nested at prim depths 3–17, and the env
+addresses three of them by explicit path (`{ENV_REGEX_NS}/Robot/waistRoll`,
+`.../R_thumb_distal`, `.../R_pinky_distal`) for its FrameTransformers. Those
+stop resolving and every distance reward silently loses its frames.
 
-Headless training is entirely unaffected — PhysX and CUDA never initialize RTX.
-But it means **judge policies by metrics, not by looking at them**: track
-`Episode_Reward/distance_to_object`, `/hand_height` and `/object_height` in
-tensorboard. `object_height` rising off zero is the only real evidence of a
-grasp. Visualizing would mean Isaac Sim 6.0, hence the beta Isaac Lab 3.0,
-hence porting the env config — the same two-environment split `adam-wbc`
-ended up with.
+Isaac Lab 2.3.2's converter emits a **flat** hierarchy — 44 bodies as direct
+children of the default prim — which 3.0 reads happily. So that converter's
+output is committed under `assets/robots/adam_u/usd/` (~104 MB) and is what
+gets spawned. `tools/export_usd.py` regenerates it and verifies the result is
+flat with 44 bodies, but it needs the Isaac Sim 5.1 / Isaac Lab 2.3.2 image,
+which this repo no longer builds — recover that `Dockerfile` from git history
+if the URDF ever changes.
 
-**The URDF is re-imported on every launch unless you cache it.** With
-`usd_dir` unset, Isaac Lab's converter writes to a fresh random `/tmp`
-directory each run, so a 44-link, 47-mesh robot is converted from scratch every
-time. Now pinned to `.cache/usd/adam_u/`, which makes it hash-cached.
+**`handle_deprecated_rsl_rl_cfg()` is not optional.** `RslRlMLPModelCfg` still
+carries the pre-5.0 `stochastic` and `init_noise_std` fields, both `MISSING`.
+Left in, they reach the model as kwargs and rsl-rl 5.0.1 dies with
+`TypeError: MLPModel.__init__() got an unexpected keyword argument 'stochastic'`.
+Isaac Lab's own train script calls the helper; a hand-written one must too.
+Both scripts here do.
 
-**`R_middle_proximal` is misnamed in the URDF.** The link is called
-`R_index_distalR_middle_proximal` (and so is its mesh file) — evidently a
-string-concatenation slip upstream, since the left side is plain
-`L_middle_proximal`. It is self-consistent and USD-legal, so it loads and
-trains fine; just do not expect the name to match the left hand's. Joint names
-(`R_middle_MCP_joint`) are unaffected, so the `R_middle.*` regexes still work.
+**`obs_groups` is required** on `RslRlBaseRunnerCfg` and `MISSING` by default;
+`OnPolicyRunner` reads it before the first step. This env publishes only a
+`policy` group, so the critic shares it.
 
-**`pink` must be importable even though nothing uses it.**
-`adam_u_grasp_env_cfg.py` imports `pink.tasks.FrameTask` and Isaac Lab's
-`PinkInverseKinematicsActionCfg` at module scope, but the action space is plain
-joint-position control — the IK imports are dead. Rather than delete them (IK
-actions are a plausible next step for grasping), the lock carries the whole
-Pink stack: `pin`, `pin-pink`, `qpsolvers`, `daqp`, `quadprog` and nine
-`cmeel-*` binary wheels, pinned via `uv pip compile` against the numpy/scipy
-already in the lock.
+**The image export is slow, not hung.** `docker compose build` finishes all
+build stages and then sits at `exporting layers` for many minutes writing a
+~48 GB image. It looks wedged and is not — measure `docker system df` growth
+before concluding otherwise.
 
-**The two checkpoints shipped in `logs/` are useless — do not debug against
-them.** Both `model_0.pt` files are `iter: 0`, i.e. saved before any learning
-happened. They also cannot be loaded here: rsl-rl 3.x's `ActorCritic` calls
-`load_state_dict(strict=True)`, and these were written by rsl-rl 2.x, so they
-carry 17 tensors with no `actor_obs_normalizer.*` / `critic_obs_normalizer.*`
-buffers. `play.py` on them fails on missing keys, which reads like a bug in the
-port and is not one. Train your own; the first save lands at iteration 50.
+**6.0's first launch looks hung too.** It spends minutes building the shader
+cache. The named cache volumes in `docker-compose.yml` mean it happens once.
 
 **`shm_size: 16gb` is required.** PhysX fails oddly on Docker's 64 MB default,
 and the errors never mention shared memory.
+
+**`R_middle_proximal` is misnamed in the URDF.** The link is
+`R_index_distalR_middle_proximal` — a string-concatenation slip upstream, since
+the left side is plain `L_middle_proximal`. It is self-consistent and
+USD-legal, so it loads and trains fine. Joint names (`R_middle_MCP_joint`) are
+unaffected, so the `R_middle.*` regexes still work.
+
+**Old checkpoints do not load.** The two `model_0.pt` files upstream ships in
+`logs/` are `iter: 0` — untrained — and were written by rsl-rl 2.x. Anything
+from the retired 2.3.2 environment is also incompatible: rsl-rl 4.0 split the
+`policy` model config into separate `actor` and `critic`. `play.py` accepts a
+TorchScript export via `--policy` as a version-independent path, but note that
+`get_right_eef_quat` returns `body_quat_w`, whose component order *also*
+changed — so 4 of the 70 inputs would be permuted. Retrain rather than
+transfer.
 
 ## What upstream gives you, and what it does not
 
@@ -338,68 +260,41 @@ Simplified in ways that will limit results:
    `envs/utils/observations.py` already defines `object_obs()`, which returns
    exactly the hand-relative deltas, and nothing calls it.
 2. **`reset_robot_joints` randomizes every joint**, not just the right arm,
-   including the 22 finger joints and the neck. `position_range` is ±0.1 rad.
-3. **Nothing rewards closing the fingers**, and nothing penalizes knocking the
-   cube off the table — only `object_dropped` at z < 0.5, which is far *below
-   the table surface* at 1.025 m, so the episode runs on after a sweep-off
-   until the cube reaches the floor.
-4. **`distance_to_object` uses the thumb and pinky tips only.** A policy can
+   including the 22 finger joints and the neck, at ±0.1 rad.
+3. **Nothing rewards closing the fingers.** This is the big one — measured, not
+   theorised: after 300 iterations `distance_to_object` reached 1.85 of ~2.0
+   while `object_height` sat at 0.0139 of 5.0. The policy reaches the cube and
+   stops, because reaching is rewarded and gripping is not. Fix this before any
+   long run.
+4. **Nothing penalizes knocking the cube off the table** — only
+   `object_dropped` at z < 0.5, far below the 1.025 m table surface, so the
+   episode runs on after a sweep-off until the cube reaches the floor.
+5. **`distance_to_object` uses the thumb and pinky tips only.** A policy can
    maximize it by straddling the cube without ever gripping.
-5. **`num_steps_per_env = 32` with `episode_length_s = 10.0`** at 30 Hz control
+6. **`num_steps_per_env = 32` with `episode_length_s = 10.0`** at 30 Hz control
    (`dt = 1/60`, `decimation = 2`) means 300 steps per episode against 32-step
    rollouts — nearly ten updates per episode, so early value estimates are
    heavily bootstrapped.
-6. **`wrist_actuators` have `damping=0.0`.** The other groups use 10–20.
+7. **`wrist_actuators` have `damping=0.0`** where other groups use 10–20.
    Undamped position drives on a 7-DoF arm invite oscillation; suspect this
    first if the wrist chatters.
-
-None of this blocks training — it is what to change once a baseline exists.
 
 ## Unverified inputs — get these from PNDbotics
 
 1. **Actuator gains.** `stiffness=80, damping=10` on the arm is a round number,
    not a measured value. Adam Lite's gains in `adam-wbc` were derived from
-   rotor inertia via `Kp = J·ω²`; the equivalent numbers for Adam-U's arm and
-   for the Inspire hands are unknown.
-2. **Effort limits.** The arm and wrist are both set to 10 Nm and the fingers to
-   10 Nm — the fingers being as strong as the shoulder is certainly wrong.
-3. **Authoritative joint limits**, and whether the URDF's agree with the MJCF.
-   The URDF and MJCF disagreed for Adam Lite; assume the same until checked.
-4. **The `lifting_Columns` base.** It is `fix_base=True` at z = 1.0 with a
-   0.707/0.707 quaternion (90° about x). Whether that matches the real torso
-   height and the table geometry has not been checked against hardware.
+   rotor inertia via `Kp = J·ω²`; the equivalent numbers for Adam-U's arms and
+   the Inspire hands are unknown.
+2. **Effort limits.** Arm and wrist are both 10 Nm and the fingers 10 Nm — the
+   fingers being as strong as the shoulder is certainly wrong.
+3. **Authoritative joint limits**, and whether URDF and MJCF agree. They
+   disagreed for Adam Lite; assume the same until checked.
+4. **The `lifting_Columns` base.** `fix_base=True` at z = 1.0, rotated 90°
+   about Z. Whether that matches the real torso height and table geometry has
+   not been checked against hardware.
 
-## Native install (optional)
+## Notes on the filesystem
 
-Docker is the day-to-day path. For a native venv, mirror the image:
-
-```bash
-uv venv --python 3.11 .venv && . .venv/bin/activate
-uv pip install --no-deps "setuptools<81" wheel
-uv pip install --no-deps --no-build-isolation \
-    --extra-index-url https://pypi.nvidia.com \
-    --extra-index-url https://download.pytorch.org/whl/cu128 \
-    --index-strategy unsafe-best-match \
-    -r docker/requirements.lock.txt
-git clone --depth 1 --branch v2.3.2 https://github.com/isaac-sim/IsaacLab.git
-for p in isaaclab isaaclab_assets isaaclab_mimic isaaclab_rl isaaclab_tasks; do
-    uv pip install --no-deps -e IsaacLab/source/$p
-done
-
-export OMNI_KIT_ACCEPT_EULA=YES
-python adam_u_isaac_lab/adam_u_rl/scripts/train.py --headless --num_envs 16 --max_iterations 3
-```
-
-Add packages with the lock as a constraint, or you will silently downgrade torch:
-
-```bash
-uv pip install --constraint docker/requirements.lock.txt <pkg>
-```
-
-## Tools
-
-```bash
-python tools/sanitize_dae.py <mesh_dir> [--dry-run]   # USD-legal Collada ids
-```
-
-Idempotent. Re-run it if the model is ever re-fetched from upstream.
+The container runs as root, so `logs/` comes back root-owned on the host (same
+as adam-wbc's `logs/sonic_eval/`). Delete such files from inside a container
+rather than reaching for `sudo`.

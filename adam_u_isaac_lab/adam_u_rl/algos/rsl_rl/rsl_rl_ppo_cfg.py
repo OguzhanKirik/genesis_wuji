@@ -1,31 +1,45 @@
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
-from isaaclab.utils import configclass
+"""PPO runner config for Adam-U grasping, rsl-rl 5.x schema (Isaac Lab 3.0).
 
-@configclass 
+rsl-rl >= 4.0 replaced the single `policy` model config with separate `actor`
+and `critic` configs (`RslRlMLPModelCfg`), and folded `init_noise_std` into a
+distribution config on the actor. Hyperparameters are otherwise identical to
+adam_u_rl/algos/rsl_rl/rsl_rl_ppo_cfg.py.
+
+Because the model config schema differs, **checkpoints are NOT interchangeable
+between the two environments**. To watch a policy trained on the 5.1 side, use
+the TorchScript export instead -- see scripts/play.py.
+"""
+
+from isaaclab.utils.configclass import configclass
+from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+
+
+@configclass
 class RslRlAdamUGraspPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32
     max_iterations = 1500
     save_interval = 50
-    experiment_name = "adam_u_grasp"
+    experiment_name = "adam_u30_grasp"
 
-    # Required since Isaac Lab 2.3 / rsl-rl 3.x: maps algorithm observation sets
-    # onto the groups the env publishes. This env exposes only "policy", so the
-    # critic shares it. Without this the field stays MISSING and OnPolicyRunner
-    # fails in resolve_obs_groups() before the first step.
+    # This env publishes only a "policy" observation group, so the critic
+    # shares it. Required since 2.3 / rsl-rl 3.x.
     obs_groups = {"policy": ["policy"], "critic": ["policy"]}
 
-    policy = RslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
-        actor_hidden_dims=[512, 256, 128],
-        critic_hidden_dims=[512, 256, 128],
+    actor = RslRlMLPModelCfg(
+        hidden_dims=[512, 256, 128],
         activation="elu",
-        # Also new in rsl-rl 3.x, and MISSING by default. Empirical observation
-        # normalization matters here: object positions are ~1 m while joint
-        # velocities are ~1e-2, so an unnormalized critic is badly conditioned.
-        actor_obs_normalization=True,
-        critic_obs_normalization=True,
+        # Matches actor_obs_normalization=True on the 5.1 side. The observation
+        # vector mixes metre-scale positions with 1e-2 joint velocities.
+        obs_normalization=True,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0),
     )
-    
+
+    critic = RslRlMLPModelCfg(
+        hidden_dims=[512, 256, 128],
+        activation="elu",
+        obs_normalization=True,
+    )
+
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
