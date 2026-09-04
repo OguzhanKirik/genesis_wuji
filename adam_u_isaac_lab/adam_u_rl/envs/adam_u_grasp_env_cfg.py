@@ -54,7 +54,9 @@ from isaaclab.utils.math import quat_apply
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.envs.mdp.actions.pink_actions_cfg import PinkInverseKinematicsActionCfg
-from isaaclab.controllers.pink_ik_cfg import PinkIKControllerCfg
+# Isaac Lab 2.3 moved this into a `pink_ik` subpackage; upstream's
+# `isaaclab.controllers.pink_ik_cfg` path is 2.2-era and no longer resolves.
+from isaaclab.controllers.pink_ik import PinkIKControllerCfg
 from pink.tasks import FrameTask
 
 # 导入MDP函数

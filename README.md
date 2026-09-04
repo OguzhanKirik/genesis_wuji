@@ -1,7 +1,7 @@
 # Adam-U RL
 
 Reinforcement learning for the PNDbotics **Adam-U** (44-link, 43-DoF humanoid
-with two 11-DoF Inspire hands) in Isaac Lab.
+with two 12-DoF Inspire hands) in Isaac Lab.
 
 The task is **right-arm grasping**: lift a 5 cm cube off a table. This is
 manipulation, not locomotion — the sibling repo `adam-wbc` covers whole-body
@@ -89,10 +89,32 @@ python adam_u_rl/scripts/play.py --headless --num_envs 4 \
 `play.py` also writes TorchScript and ONNX exports next to the checkpoint, in
 `exported/`.
 
+## Verified
+
+`docker compose build` then 3 iterations at 16 envs, on this machine:
+
+```
+rigid bodies    44        matches the URDF exactly -- this is the check that
+movable joints  43        proves the mesh fix worked; unsanitized it is 0
+Mean reward     1.21 -> 1.96 -> 3.69   over iterations 0..2
+Episode_Reward/distance_to_object      0.2438   thumb+pinky frames resolve
+Episode_Reward/hand_height            -0.0369   wrist frame resolves
+Episode_Reward/object_height           0.0000   nothing lifted in 3 iterations
+Computation      460 steps/s at 16 envs  (per-step overhead dominates; scale up)
+```
+
+`object_height` staying at 0 is expected this early — it is the metric that
+matters, so watch it rather than the total.
+
+Two things to know about the filesystem: the container runs as root, so
+`logs/` and `.cache/usd/` come back root-owned on the host (same as adam-wbc's
+`logs/sonic_eval/`), and the USD cache writes a 109 MB `adam_u_base.usd` on
+first run, after which `.asset_hash` makes the conversion a no-op.
+
 ## The port to Isaac Lab 2.3.2
 
-Upstream runs on Isaac Sim 5.0 / Isaac Lab 2.2 / rsl-rl 2.x. Six changes were
-needed for 5.1 / 2.3.2 / rsl-rl 3.0.1. All are in the third commit.
+Upstream runs on Isaac Sim 5.0 / Isaac Lab 2.2 / rsl-rl 2.x. Seven changes
+were needed for 5.1 / 2.3.2 / rsl-rl 3.0.1.
 
 **`obs_groups` is now required.** `RslRlBaseRunnerCfg.obs_groups` is `MISSING`
 by default, and `OnPolicyRunner.__init__` reads `cfg["obs_groups"]` before the
@@ -117,6 +139,10 @@ so an unnormalized critic is badly conditioned.
 `action="store_true", default=True`, and video forces `--enable_cameras`, i.e.
 the RTX renderer — which crashes on this GPU (below). Default is now off, with
 `--no-video` for scripts.
+
+**`isaaclab.controllers.pink_ik_cfg` moved.** In 2.3 it is a `pink_ik`
+subpackage, so upstream's 2.2-era path raises `ModuleNotFoundError` at import
+time — the first thing that actually stopped training here.
 
 **`envs/utils/__init__,py`** — a comma, not a dot. The directory only ever
 worked as an implicit namespace package, so the file's contents were dead code
@@ -182,6 +208,14 @@ Pink stack: `pin`, `pin-pink`, `qpsolvers`, `daqp`, `quadprog` and nine
 `cmeel-*` binary wheels, pinned via `uv pip compile` against the numpy/scipy
 already in the lock.
 
+**The two checkpoints shipped in `logs/` are useless — do not debug against
+them.** Both `model_0.pt` files are `iter: 0`, i.e. saved before any learning
+happened. They also cannot be loaded here: rsl-rl 3.x's `ActorCritic` calls
+`load_state_dict(strict=True)`, and these were written by rsl-rl 2.x, so they
+carry 17 tensors with no `actor_obs_normalizer.*` / `critic_obs_normalizer.*`
+buffers. `play.py` on them fails on missing keys, which reads like a bug in the
+port and is not one. Train your own; the first save lands at iteration 50.
+
 **`shm_size: 16gb` is required.** PhysX fails oddly on Docker's 64 MB default,
 and the errors never mention shared memory.
 
@@ -204,9 +238,9 @@ Simplified in ways that will limit results:
 2. **`reset_robot_joints` randomizes every joint**, not just the right arm,
    including the 22 finger joints and the neck. `position_range` is ±0.1 rad.
 3. **Nothing rewards closing the fingers**, and nothing penalizes knocking the
-   cube off the table — only `object_dropped` at z < 0.5, which is *below the
-   table top* at 1.05 m, so the episode continues after a sweep-off until the
-   cube falls to the floor.
+   cube off the table — only `object_dropped` at z < 0.5, which is far *below
+   the table surface* at 1.025 m, so the episode runs on after a sweep-off
+   until the cube reaches the floor.
 4. **`distance_to_object` uses the thumb and pinky tips only.** A policy can
    maximize it by straddling the cube without ever gripping.
 5. **`num_steps_per_env = 32` with `episode_length_s = 10.0`** at 30 Hz control
