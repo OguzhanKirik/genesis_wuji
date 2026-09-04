@@ -173,11 +173,17 @@ if the meshes are ever re-imported. The entrypoint re-checks the bind mount on
 every start, because a `git checkout -- .` brings the bad ids straight back.
 Adam Lite needed the identical fix in `adam-wbc`.
 
-**Isaac Sim 5.1 cannot render on this GPU.** Any GUI or camera run dies ~2.4 s
-in at `librtx.scenedb.plugin.so!carbOnPluginStartup`. Verified in `adam-wbc`
-both native and in Docker; not an X11 or Docker problem, and not fixed by
-forcing the NVIDIA Vulkan ICD. The RTX PRO 6000 Blackwell (sm_120) is newer
-than Isaac Sim 5.1's renderer; Isaac Sim **6.0** renders on the same card.
+**Isaac Sim 5.1 cannot render on this GPU.** Reproduced in this image, not
+just inherited from `adam-wbc`: dropping `--headless` segfaults (exit 139) at
+2.64 s in `librtx.scenedb.plugin.so!carbOnPluginStartup`, after
+`omni.rtx.settings.core` starts up. X11 is fine — `DISPLAY=:1`, the socket is
+mounted, `xhost +local:root` granted — and it is not a Docker problem either;
+adam-wbc saw the same crash natively, and forcing the NVIDIA Vulkan ICD does
+not help. The RTX PRO 6000 Blackwell (sm_120) is simply newer than Isaac Sim
+5.1's renderer. Isaac Sim **6.0** renders on the same card.
+
+`--livestream 1|2` does not get around it: WebRTC streaming still drives the
+same RTX renderer.
 
 Headless training is entirely unaffected — PhysX and CUDA never initialize RTX.
 But it means **judge policies by metrics, not by looking at them**: track
