@@ -69,9 +69,68 @@ services:
       memlock: -1
       stack: 67108864
 
+  # ---------------------------------------------------------------------------
+  # Visualization: Isaac Sim 6.0 / Isaac Lab 3.0. Separate image because 5.1's
+  # RTX renderer segfaults on this Blackwell card (verified -- see README.md),
+  # and because six pairwise version conflicts rule out one shared environment.
+  #
+  #     xhost +local:root                       # once per login, on the host
+  #     docker compose run --rm adam_rl30 \
+  #         python adam_u_rl30/scripts/play.py --viz kit --num_envs 4 --real-time \
+  #         --policy logs/rsl_rl/adam_u_grasp/<run>/exported/policy.pt
+  #
+  # The USD it loads is generated, not committed. Once, from the 5.1 image:
+  #     docker compose run --rm adam_rl python /opt/tools/export_usd.py
+  adam_rl30:
+    build:
+      context: .
+      dockerfile: Dockerfile.viz
+      args:
+        ISAACLAB30_REV: ${ISAACLAB30_REV:-28a37cecdd433c22d9eabd6a5954add9f13a8951}
+    image: adam-u-rl:isaaclab-3.0
+    container_name: adam_rl30
+    network_mode: host
+    ipc: host
+    tty: true
+    stdin_open: true
+    working_dir: /workspace
+    environment:
+      - OMNI_KIT_ACCEPT_EULA=YES
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+      - DISPLAY=${DISPLAY:-:1}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST:-12.0}
+    volumes:
+      - ./adam_u_isaac_lab:/workspace
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Separate cache volumes from the 5.1 service -- the two Isaac Sim
+      # versions must not share a shader or extension cache.
+      - isaac60-cache-kit:/opt/venv/lib/python3.12/site-packages/isaacsim/kit/cache
+      - isaac60-cache-ov:/root/.cache/ov
+      - isaac60-cache-nvidia:/root/.nv
+      - isaac60-data:/root/.local/share/ov/data
+      - isaac60-logs:/root/.nvidia-omniverse/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
 volumes:
   isaac-cache-kit:
   isaac-cache-ov:
   isaac-cache-nvidia:
   isaac-data:
   isaac-logs:
+  isaac60-cache-kit:
+  isaac60-cache-ov:
+  isaac60-cache-nvidia:
+  isaac60-data:
+  isaac60-logs:

@@ -16,19 +16,29 @@ production research" — take that at face value; see
 ## Layout
 
 ```
-Dockerfile                  Isaac Lab 2.3.2 / Isaac Sim 5.1.0 training image
-docker-compose.yml          single service `adam_rl`, GPU + caches + bind mounts
+Dockerfile                  Isaac Sim 5.1 / Isaac Lab 2.3.2  -- TRAINING
+Dockerfile.viz              Isaac Sim 6.0 / Isaac Lab 3.0     -- VISUALIZATION
+docker-compose.yml          services `adam_rl` and `adam_rl30`
 docker/
-  requirements.lock.txt     280 pins, frozen from a verified environment
+  requirements.lock.txt     297 pins, frozen from a verified 5.1 environment
+  requirements.viz.lock.txt 258 pins, frozen from a verified 6.0 environment
   entrypoint.sh             CUDA preflight + mesh repair on the bind mount
-tools/sanitize_dae.py       makes the Collada meshes legal for USD import
+  entrypoint.viz.sh         CUDA preflight + USD and X11 preflight
+tools/
+  sanitize_dae.py           makes the Collada meshes legal for USD import
+  export_usd.py             URDF -> flat USD, for the 3.0 side (run on 5.1)
 adam_u_isaac_lab/           vendored upstream (see git history for the delta)
-  adam_u_rl/
+  adam_u_rl/                the 2.3.2 training package
     envs/adam_u_grasp_env_cfg.py    scene, actions, observations, rewards
     envs/utils/observations.py      end-effector pose observation terms
     algos/rsl_rl/rsl_rl_ppo_cfg.py  PPO hyperparameters
     scripts/train.py, play.py       entry points
+  adam_u_rl30/              the 3.0 visualization package, same task
+    envs/adam_u_grasp_env_cfg.py    derived from the 2.3.2 one, USD spawn
+    algos/rsl_rl/rsl_rl_ppo_cfg.py  rsl-rl 5.x actor/critic schema
+    scripts/play.py                 the viewer; train.py trains natively
   assets/robots/adam_u/     URDF + 33 DAE + 14 STL meshes (sanitized)
+    usd/                    generated flat USD (gitignored, ~104 MB)
   logs/                     checkpoints and tensorboard runs (gitignored)
   .cache/usd/               URDF->USD conversion cache (gitignored)
 ```
@@ -110,6 +120,92 @@ Two things to know about the filesystem: the container runs as root, so
 `logs/` and `.cache/usd/` come back root-owned on the host (same as adam-wbc's
 `logs/sonic_eval/`), and the USD cache writes a 109 MB `adam_u_base.usd` on
 first run, after which `.asset_hash` makes the conversion a no-op.
+
+## Watching a policy (Isaac Sim 6.0)
+
+Isaac Sim 5.1 cannot render on this card, so visualization lives in a second,
+fully separate environment — the same split adam-wbc ended up with. Six
+pairwise version conflicts make one shared environment impossible:
+
+|              | `adam_rl` (training) | `adam_rl30` (visualization) |
+|--------------|----------------------|------------------------------|
+| Python       | 3.11                 | 3.12                         |
+| Isaac Sim    | 5.1.0                | 6.0.0.1                      |
+| Isaac Lab    | 2.3.2                | 3.0 (commit `28a37ce`, beta) |
+| torch        | 2.7.0+cu128          | 2.10.0+cu128                 |
+| rsl-rl-lib   | 3.0.1                | 5.0.1                        |
+| numpy        | 1.26.4 (<2)          | 2.5.2 (>=2)                  |
+| RTX / GUI    | segfaults            | **works**                    |
+| Package      | `adam_u_rl`          | `adam_u_rl30`                |
+| Experiment   | `adam_u_grasp`       | `adam_u30_grasp`             |
+
+Headless production training belongs on `adam_rl`. Isaac Lab 3.0 is beta and
+its release notes warn of continuing breaking changes — expect `adam_rl30` to
+need repair on update. That is the reason training stays on 5.1.
+
+### One-time setup
+
+```bash
+# 1. the 3.0 side loads a pre-converted flat USD; generate it from the 5.1 image
+docker compose run --rm adam_rl python /opt/tools/export_usd.py
+
+# 2. build the visualization image
+docker compose build adam_rl30
+
+# 3. let the container reach your X server (once per login)
+xhost +local:root
+```
+
+### Watching
+
+Checkpoints are **not** interchangeable — rsl-rl 4.0 split the `policy` model
+config into separate `actor` and `critic`, so a 5.1 checkpoint cannot load
+under 5.0.1. The bridge is the TorchScript export, which bakes the observation
+normalizer and the actor MLP into one module (`forward(x) = actor(normalizer(x))`)
+with no rsl-rl involvement on either side.
+
+```bash
+# on the 5.1 side: writes <run>/exported/policy.pt (and .onnx)
+docker compose run --rm adam_rl python adam_u_rl/scripts/play.py --headless \
+    --checkpoint_path logs/rsl_rl/adam_u_grasp/<run>/model_300.pt
+
+# on the 6.0 side: watch it
+docker compose run --rm adam_rl30 python adam_u_rl30/scripts/play.py \
+    --viz kit --num_envs 4 --real-time \
+    --policy logs/rsl_rl/adam_u_grasp/<run>/exported/policy.pt
+```
+
+`play.py` checks that the policy's input width matches the env's observation
+width and refuses to run on a mismatch, because the failure mode otherwise is
+a policy that renders convincingly while acting on garbage. If you edit an
+observation term in one env config, edit it in the other.
+
+Isaac Lab 3.0 replaced `--headless` with `--viz`: omit it for headless, or pass
+a CSV of backends.
+
+| `--viz` | notes |
+|---|---|
+| `kit` | RTX viewport |
+| `newton` | Newton's viewer |
+| `rerun` | bypasses RTX entirely |
+| `viser` | browser-based, so it also works from another machine |
+
+`rerun` and `viser` are worth knowing about: both skip RTX, so they are the
+fallback if `kit` ever regresses on this card the way 5.1 did. Neither was in
+adam-wbc's 6.0 environment; they are pinned into this one deliberately.
+
+### Training natively on 3.0
+
+`adam_u_rl30/scripts/train.py` trains the same task on the rsl-rl 5.x schema,
+so the viz environment is not read-only. Unlike the 5.1 script, its `--resume`
+actually works.
+
+```bash
+docker compose run --rm adam_rl30 python adam_u_rl30/scripts/train.py \
+    --num_envs 4096                       # headless
+docker compose run --rm adam_rl30 python adam_u_rl30/scripts/train.py \
+    --viz kit --num_envs 16                # watch it learn
+```
 
 ## The port to Isaac Lab 2.3.2
 

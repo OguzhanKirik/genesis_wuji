@@ -1,0 +1,100 @@
+# Adam-U RL — Isaac Sim 6.0 / Isaac Lab 3.0 VISUALIZATION image.
+#
+# This exists for one reason: Isaac Sim 5.1's RTX renderer segfaults on an
+# RTX PRO 6000 Blackwell (sm_120), so the training image in ./Dockerfile is
+# headless-only. Isaac Sim 6.0 renders on the same card. Six pairwise version
+# conflicts make one shared environment impossible:
+#
+#                 training (Dockerfile)   visualization (this file)
+#   Python        3.11                    3.12
+#   Isaac Sim     5.1.0                   6.0.0.1
+#   Isaac Lab     2.3.2                   3.0 (commit 28a37ce)
+#   torch         2.7.0+cu128             2.10.0+cu128
+#   rsl-rl-lib    3.0.1                   5.0.1
+#   numpy         1.26.4 (<2)             2.5.2 (>=2)
+#
+# Consequences, both of which the README spells out:
+#   * rsl-rl checkpoints are NOT interchangeable between the two (4.0 split the
+#     `policy` model config into separate `actor` and `critic`). The viewer
+#     therefore loads the TorchScript policy that the 5.1 side exports, not the
+#     raw checkpoint.
+#   * Isaac Lab 3.0's URDF importer nests rigid bodies under the kinematic
+#     tree, which breaks the env's explicit FrameTransformer prim paths
+#     ({ENV_REGEX_NS}/Robot/waistRoll and friends). So this side loads a
+#     pre-converted FLAT USD produced by 2.3.2's converter -- see
+#     tools/export_usd.py.
+#
+# Isaac Lab 3.0 is beta and its release notes warn of continuing breaking
+# changes; expect this image to need repair on update. That is exactly why
+# training stays on 5.1.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    OMNI_KIT_ACCEPT_EULA=YES \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# --- system libraries -------------------------------------------------------
+# Same X/GL/Vulkan stack as the training image, but here it is load-bearing:
+# this one actually renders.
+# build-essential is needed here but not in the 5.1 image: a few of the
+# rerun/viser dependencies ship no cp312 wheel (pyliblzfse, an optional LZFSE
+# codec reached through trimesh, is the first to fail) and must compile.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates curl git git-lfs \
+        libgl1 libglu1-mesa libglib2.0-0 libsm6 libice6 libxt6 \
+        libxrandr2 libxinerama1 libxcursor1 libxi6 libxkbcommon0 \
+        libxrender1 libxext6 libfontconfig1 libfreetype6 \
+        libvulkan1 vulkan-tools mesa-vulkan-drivers libegl1 \
+        libgomp1 xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- python 3.12 ------------------------------------------------------------
+ENV UV_INSTALL_DIR=/usr/local/bin
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && uv python install 3.12 \
+    && uv venv --python 3.12 /opt/venv
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
+
+# --- python dependencies ----------------------------------------------------
+# Frozen from a verified working Isaac Sim 6.0 environment, plus rerun-sdk and
+# viser (resolved against the frozen numpy/torch/scipy pins). Those two matter:
+# both bypass RTX entirely, so they are the fallback if `--viz kit` ever
+# regresses on this card the way 5.1 did. viser is browser-based, so it also
+# works from another machine.
+COPY docker/requirements.viz.lock.txt /tmp/requirements.lock.txt
+RUN uv pip install --no-deps "setuptools<81" wheel \
+    && uv pip install --no-deps --no-build-isolation \
+        --extra-index-url https://pypi.nvidia.com \
+        --extra-index-url https://download.pytorch.org/whl/cu128 \
+        --index-strategy unsafe-best-match \
+        -r /tmp/requirements.lock.txt \
+    && rm /tmp/requirements.lock.txt
+
+# --- Isaac Lab 3.0 ----------------------------------------------------------
+# Pinned to a commit, not a tag: 3.0 is beta and moves. This is the revision
+# verified on this GPU. Ten source packages, up from five in 2.3.2.
+ARG ISAACLAB30_REV=28a37cecdd433c22d9eabd6a5954add9f13a8951
+RUN git clone --filter=blob:none https://github.com/isaac-sim/IsaacLab.git /opt/IsaacLab30 \
+    && git -C /opt/IsaacLab30 checkout --detach ${ISAACLAB30_REV} \
+    && for p in isaaclab isaaclab_assets isaaclab_newton isaaclab_ov isaaclab_ovphysx \
+                isaaclab_physx isaaclab_ppisp isaaclab_rl isaaclab_tasks \
+                isaaclab_visualizers; do \
+         uv pip install --no-deps -e /opt/IsaacLab30/source/$p ; \
+       done
+ENV ISAACLAB_PATH=/opt/IsaacLab30
+
+# --- project code -----------------------------------------------------------
+WORKDIR /workspace
+COPY tools/ /opt/tools/
+COPY adam_u_isaac_lab/ /workspace/
+
+ENV PYTHONPATH=/workspace:/workspace/adam_u_rl30:/workspace/adam_u_rl30/scripts
+
+COPY docker/entrypoint.viz.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash"]
