@@ -4,7 +4,7 @@
 
 import gymnasium as gym
 from .envs.adam_u_grasp_env_cfg import AdamUGraspEnvCfg
-from .algos.rsl_rl_ppo_cfg import RslRlAdamUGraspPPORunnerCfg
+from .algos.rsl_rl.rsl_rl_ppo_cfg import RslRlAdamUGraspPPORunnerCfg
 
 # 注册环境
 gym.register(

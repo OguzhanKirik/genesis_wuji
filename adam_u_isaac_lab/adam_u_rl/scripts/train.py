@@ -99,7 +99,10 @@ def main():
     env = gym.make(f"Isaac-{args_cli.env}", cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
     
     # 设置日志目录
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    # Anchored to the repo root rather than the working directory, so checkpoints
+    # always land in the bind-mounted ./logs instead of wherever you launched from.
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    log_root_path = os.path.join(repo_root, "logs", "rsl_rl", agent_cfg.experiment_name)
     log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = os.path.join(log_root_path, log_dir)
     

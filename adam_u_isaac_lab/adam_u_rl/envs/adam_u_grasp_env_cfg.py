@@ -10,6 +10,21 @@ import sys
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+# Repo root, derived from this file rather than the process working directory.
+# Upstream used the relative path "assets/robots/..." for the URDF, which only
+# resolved when the script happened to be launched from the repo root.
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+ADAM_U_ASSETS = os.environ.get("ADAM_U_ASSETS", os.path.join(REPO_ROOT, "assets"))
+ADAM_U_URDF = os.path.join(ADAM_U_ASSETS, "robots", "adam_u", "urdf", "adam_u.urdf")
+
+# Isaac Lab converts the URDF to USD on every env creation, and with usd_dir
+# unset it writes to a fresh random /tmp directory each time -- so a 44-link,
+# 47-mesh robot is re-imported on every launch. Pointing it at a stable
+# directory makes the conversion hash-cached and later starts much faster.
+ADAM_U_USD_CACHE = os.environ.get(
+    "ADAM_U_USD_CACHE", os.path.join(REPO_ROOT, ".cache", "usd", "adam_u")
+)
+
 import math
 from typing import Sequence
 import torch
@@ -184,7 +199,9 @@ class AdamUGraspSceneCfg(InteractiveSceneCfg):
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UrdfFileCfg(
-            asset_path="assets/robots/adam_u/urdf/adam_u.urdf",
+            asset_path=ADAM_U_URDF,
+            usd_dir=ADAM_U_USD_CACHE,
+            usd_file_name="adam_u.usd",
             fix_base=True,
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(

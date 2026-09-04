@@ -14,7 +14,11 @@ import configs.rsl_rl_cli_args as rsl_rl_cli_args
 parser = argparse.ArgumentParser(description="Play a trained policy for Adam-U grasp task.")
 
 parser.add_argument("--checkpoint_path", type=str, required=True, help="Path to the saved checkpoint.")
-parser.add_argument("--video", action="store_true", default=True, help="Record video of the rollout.")
+# NOTE upstream had `action="store_true", default=True`, which can never be
+# turned off. Video also forces --enable_cameras, i.e. the RTX renderer, which
+# crashes on an RTX PRO 6000 Blackwell under Isaac Sim 5.1 (see README).
+parser.add_argument("--video", action="store_true", default=False, help="Record video of the rollout.")
+parser.add_argument("--no-video", dest="video", action="store_false", help="Disable video recording.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real time.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments for evaluation.")
@@ -98,13 +102,16 @@ policy = runner.get_inference_policy(device=device)
 
 # 导出策略
 export_dir = os.path.join(os.path.dirname(args_cli.checkpoint_path), "exported")
-export_policy_as_jit(policy_nn, runner.obs_normalizer, path=export_dir, filename="policy.pt")
-export_policy_as_onnx(policy_nn, normalizer=runner.obs_normalizer, path=export_dir, filename="policy.onnx")
+# rsl-rl 3.x holds the empirical normalizer on the policy, not the runner.
+obs_normalizer = getattr(policy_nn, "actor_obs_normalizer", None)
+export_policy_as_jit(policy_nn, obs_normalizer, path=export_dir, filename="policy.pt")
+export_policy_as_onnx(policy_nn, normalizer=obs_normalizer, path=export_dir, filename="policy.onnx")
 
 # -------------------------
 # 推理执行回放
 # -------------------------
-obs, _ = env.get_observations()
+# Isaac Lab 2.3's wrapper returns a TensorDict here; 2.2 returned (obs, extras).
+obs = env.get_observations()
 timestep = 0
 dt = env.unwrapped.step_dt
 

@@ -1,0 +1,11 @@
+# training output and Isaac Lab's URDF->USD conversion cache
+adam_u_isaac_lab/logs/
+adam_u_isaac_lab/.cache/
+adam_u_isaac_lab/outputs/
+# host-side backup of the pre-sanitization meshes; the first commit has them
+adam_u_isaac_lab/assets/robots/adam_u/meshes.orig/
+*.log
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/

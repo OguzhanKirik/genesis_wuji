@@ -1,0 +1,77 @@
+services:
+  # One container for everything, matching the convention in adam-wbc,
+  # adam-project and adam-gym: bring it up, exec in, run whatever you need.
+  # Which job runs is a command you type, not a container choice:
+  #
+  #     docker compose up -d
+  #     docker compose exec adam_rl bash
+  #
+  #     # 30 s sanity check
+  #     python adam_u_rl/scripts/train.py --headless --num_envs 16 --max_iterations 3
+  #     # real run
+  #     python adam_u_rl/scripts/train.py --headless --num_envs 4096
+  #     # replay a checkpoint (headless -- see the renderer note in README.md)
+  #     python adam_u_rl/scripts/play.py --headless --num_envs 4 \
+  #         --checkpoint_path logs/rsl_rl/adam_u_grasp/<run>/model_1499.pt
+  #
+  # Or one-shot, without leaving a container behind:
+  #     docker compose run --rm adam_rl python adam_u_rl/scripts/train.py --headless
+  #
+  # NOTE pinned to Isaac Sim 5.1 / Isaac Lab 2.3.2 / Python 3.11, like adam-wbc
+  # and unlike adam-gym and adam-project which are on 6.0 / 3.12. Upstream
+  # adam_u_isaac_lab targets Isaac Sim 5.0; 5.1 is the closest stack that is
+  # already verified on this Blackwell card. See README.md for the port.
+  adam_rl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ISAACLAB_TAG: ${ISAACLAB_TAG:-v2.3.2}
+    image: adam-u-rl:isaaclab-2.3.2
+    container_name: adam_rl
+    network_mode: host
+    ipc: host
+    tty: true
+    stdin_open: true
+    working_dir: /workspace
+    environment:
+      - OMNI_KIT_ACCEPT_EULA=YES
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+      - DISPLAY=${DISPLAY:-:1}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      # torch 2.7.0+cu128 ships sm_120 (Blackwell). Keep aligned with the real
+      # card or any source build silently targets the wrong architecture.
+      - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST:-12.0}
+    volumes:
+      # The whole upstream checkout, live: host edits take effect with no
+      # rebuild, and logs/ plus .cache/usd/ land back on the host.
+      - ./adam_u_isaac_lab:/workspace
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Isaac Sim's extension and shader caches. Without these, every container
+      # start re-downloads extensions and rebuilds shaders -- minutes each time.
+      - isaac-cache-kit:/opt/venv/lib/python3.11/site-packages/isaacsim/kit/cache
+      - isaac-cache-ov:/root/.cache/ov
+      - isaac-cache-nvidia:/root/.nv
+      - isaac-data:/root/.local/share/ov/data
+      - isaac-logs:/root/.nvidia-omniverse/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # PhysX and Isaac Sim need far more than Docker's 64 MB default; the errors
+    # it produces otherwise never mention shared memory.
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+volumes:
+  isaac-cache-kit:
+  isaac-cache-ov:
+  isaac-cache-nvidia:
+  isaac-data:
+  isaac-logs:

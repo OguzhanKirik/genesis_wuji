@@ -1,0 +1,12 @@
+# heavy or host-specific things that must not enter the build context
+.git/
+adam_u_isaac_lab/.git/
+adam_u_isaac_lab/logs/
+adam_u_isaac_lab/.cache/
+adam_u_isaac_lab/outputs/
+# originals kept only as a host-side reference; git history has them too
+adam_u_isaac_lab/assets/robots/adam_u/meshes.orig/
+*.log
+__pycache__/
+**/__pycache__/
+*.pyc

@@ -7,12 +7,23 @@ class RslRlAdamUGraspPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 1500
     save_interval = 50
     experiment_name = "adam_u_grasp"
-    
+
+    # Required since Isaac Lab 2.3 / rsl-rl 3.x: maps algorithm observation sets
+    # onto the groups the env publishes. This env exposes only "policy", so the
+    # critic shares it. Without this the field stays MISSING and OnPolicyRunner
+    # fails in resolve_obs_groups() before the first step.
+    obs_groups = {"policy": ["policy"], "critic": ["policy"]}
+
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
+        # Also new in rsl-rl 3.x, and MISSING by default. Empirical observation
+        # normalization matters here: object positions are ~1 m while joint
+        # velocities are ~1e-2, so an unnormalized critic is badly conditioned.
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
     )
     
     algorithm = RslRlPpoAlgorithmCfg(
