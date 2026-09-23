@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "One bolt on the bare table: the simplest case the grasp pipeline has to",
+    "pass before the bin pile means anything. Same table and same drop spot as",
+    "workcell.json (bin at y = +0.20, in front of the left arm) so the head",
+    "camera framing (neckPitch 0.87) is unchanged.",
+    "No bin key -> isaac_runner authors no bin and workcell_scene publishes",
+    "none; the bolt drops onto the table inside bolts.area around center_xy.",
+    "Select with:  ros2 launch adam_u_bringup sim.launch.py",
+    "                  workcell_layout:=workcell_single.json"
+  ],
+  "table": {
+    "center": [0.55, 0.0, 0.475],
+    "size": [0.50, 0.80, 0.95],
+    "color": [0.45, 0.32, 0.18]
+  },
+  "bolts": {
+    "count": 1,
+    "count_min": 1,
+    "count_max": 1,
+    "rows": 1,
+    "cols": 1,
+    "layers": 1,
+    "layer_height": 0.04,
+    "spacing": [0.034, 0.028],
+    "center_xy": [0.55, 0.20],
+    "area": [0.10, 0.10],
+    "asset": "rod-with-threads-0001/rod-with-threads-0001.usdc",
+    "height": 0.035,
+    "approx": [0.026, 0.023, 0.035],
+    "mass": 0.03,
+    "drop_height": 0.05,
+    "jitter": 0.0
+  }
+}

@@ -34,6 +34,10 @@ Examples:
     # same, in the browser, no RTX involved
     python adam_u_rl/scripts/play.py --viz viser --num_envs 4 \
         --policy logs/rsl_rl/adam_u_grasp/<run>/exported/policy.pt
+
+    # the Wuji Hand 2 body (checkpoint must come from --robot wuji training)
+    python adam_u_rl/scripts/play.py --robot wuji --viz kit --num_envs 4 --real-time \
+        --checkpoint_path logs/rsl_rl/adam_u30_wuji_grasp/<run>/model_N.pt
 """
 
 import argparse
@@ -56,8 +60,20 @@ parser.add_argument("--num_envs", type=int, default=4, help="Number of environme
 parser.add_argument("--steps", type=int, default=100000, help="Steps to run before exiting.")
 parser.add_argument("--real-time", action="store_true", default=False,
                     help="Throttle to wall-clock, so the motion is watchable.")
+parser.add_argument("--speed", type=float, default=1.0,
+                    help="Playback speed with --real-time: 0.25 = quarter speed (slow motion), 2 = double.")
+parser.add_argument("--start-delay", type=float, default=0.0,
+                    help="Seconds to render the reset pose before the policy acts, so the viewport is up "
+                         "before the first grasp (a grasp takes ~1 s; the window takes longer to appear).")
 parser.add_argument("--skip-dim-check", action="store_true", default=False,
                     help="Run even if the policy's input width disagrees with the env.")
+parser.add_argument("--robot", choices=["pnd", "wuji"], default="pnd",
+                    help="Which body the checkpoint was trained on: pnd (Inspire hands, cube) "
+                         "or wuji (Wuji Hand 2, bolt). Must match, or the widths will not.")
+parser.add_argument("--scenario", choices=["reach", "grasp", "synergy", "pipeline"], default="reach",
+                    help="wuji only: reach (arm starts beside the torso), grasp (arm starts over the bolt), "
+                         "synergy (Experiment 2, hand alone) or pipeline (the staged whole-robot task; "
+                         "ADAM_U_STAGE must also match). Must match the training run.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -69,7 +85,16 @@ simulation_app = app_launcher.app
 
 import gymnasium as gym  # noqa: E402
 
-from adam_u_rl.envs.adam_u_grasp_env_cfg import AdamUGraspEnvCfg  # noqa: E402
+if args_cli.robot == "wuji" and args_cli.scenario == "pipeline":
+    from adam_u_rl.envs.wuji_pipeline_env_cfg import WujiPipelineEnvCfg as AdamUGraspEnvCfg  # noqa: E402
+elif args_cli.robot == "wuji" and args_cli.scenario == "synergy":
+    from adam_u_rl.envs.wuji_synergy_grasp_env_cfg import WujiSynergyGraspEnvCfg as AdamUGraspEnvCfg  # noqa: E402
+elif args_cli.robot == "wuji" and args_cli.scenario == "grasp":
+    from adam_u_rl.envs.adam_u_wuji_grasponly_env_cfg import AdamUWujiGraspOnlyEnvCfg as AdamUGraspEnvCfg  # noqa: E402
+elif args_cli.robot == "wuji":
+    from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import AdamUWujiGraspEnvCfg as AdamUGraspEnvCfg  # noqa: E402
+else:
+    from adam_u_rl.envs.adam_u_grasp_env_cfg import AdamUGraspEnvCfg  # noqa: E402
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -128,6 +153,10 @@ def main() -> int:
 
         from adam_u_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlAdamUGraspPPORunnerCfg
 
+        if args_cli.robot == "wuji" and args_cli.scenario == "pipeline":
+            from adam_u_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlWujiPipelinePPORunnerCfg as RslRlAdamUGraspPPORunnerCfg  # noqa: E402
+        elif args_cli.robot == "wuji" and args_cli.scenario == "synergy":
+            from adam_u_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlWujiSynergyPPORunnerCfg as RslRlAdamUGraspPPORunnerCfg  # noqa: E402
         agent_cfg = RslRlAdamUGraspPPORunnerCfg()
         agent_cfg.device = device
         # Strip the deprecated pre-5.0 model fields -- see train.py.
@@ -147,7 +176,8 @@ def main() -> int:
             )
             return 1
         policy = runner.get_inference_policy(device=device)
-        expected = actor_input_width(runner.alg.policy)
+        # rsl-rl 5.x: the actor lives behind alg.get_policy(); alg.policy is gone.
+        expected = actor_input_width(runner.alg.get_policy())
 
         # rsl-rl 5.x policies take the whole observation TensorDict and pick
         # their groups internally, so pass it through unmodified.
@@ -174,8 +204,20 @@ def main() -> int:
     dt = env.unwrapped.step_dt
     print(
         f"[play30] running {args_cli.num_envs} envs, dt={dt:.4f}s"
-        f"{', real-time' if args_cli.real_time else ''}"
+        f"{f', real-time x{args_cli.speed:g}' if args_cli.real_time else ''}"
     )
+
+    if args_cli.start_delay > 0:
+        # Reset FIRST. The scene spawns at the USD's own pose -- robot upright,
+        # arm at its side -- and only the reset event writes the pre-grasp pose.
+        # Rendering before that shows the standing robot for the whole delay and
+        # then snaps, which looks like the policy teleporting into the grasp.
+        env.reset()
+        print(f"[play30] holding the reset pose for {args_cli.start_delay:g} s")
+        t_end = time.time() + args_cli.start_delay
+        while simulation_app.is_running() and time.time() < t_end:
+            env.unwrapped.sim.render()
+            time.sleep(0.05)
 
     step = 0
     while simulation_app.is_running() and step < args_cli.steps:
@@ -188,7 +230,7 @@ def main() -> int:
                 obs = obs["policy"]
         step += 1
         if args_cli.real_time:
-            remaining = dt - (time.time() - start)
+            remaining = dt / args_cli.speed - (time.time() - start)
             if remaining > 0:
                 time.sleep(remaining)
 

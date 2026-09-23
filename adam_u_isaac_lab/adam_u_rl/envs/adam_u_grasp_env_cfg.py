@@ -103,8 +103,88 @@ def compute_height_reward(env, asset_cfg: SceneEntityCfg):
     # 物体高度超过桌面给予奖励
     height_above_table = object_pos[:, 2] - table_height
     
-    # 使用线性奖励，限制最大值
-    return torch.clamp(height_above_table, 0.0, 0.5)
+    # Capped at 0.20 m, not 0.50 m. The old cap asked for a 50 cm lift before
+    # the term saturated, which put nearly all of its 5.0-point budget beyond
+    # any plausible early behaviour (and possibly outside the arm's reachable
+    # workspace -- unverified, see README). A 20 cm lift is already an
+    # unambiguous success and makes the ramp 2.5x steeper per cm.
+    return torch.clamp(height_above_table, 0.0, 0.2)
+
+# Measured with tools/probe_grip.py: every right-hand finger joint has its
+# LOWER limit at 0 rad (fully open) and closes toward its UPPER limit, so a
+# joint position normalised onto [lower, upper] is a direct closure fraction.
+# The sign is measured rather than assumed -- inverted, this term would pay the
+# policy to splay the hand open on the cube.
+def compute_grasp_reward(
+    env,
+    std: float,
+    asset_cfg: SceneEntityCfg,
+    ee_thumb_cfg: SceneEntityCfg = SceneEntityCfg("right_thumb_frame"),
+    ee_pinky_cfg: SceneEntityCfg = SceneEntityCfg("right_pinky_frame"),
+):
+    """Pay for closing the fingers, but only while the tips are on the cube.
+
+    gate * closure. The gate is ~1 with the fingertips at the cube and ~0 a
+    hand's width away, so curling the fingers in free space earns nothing --
+    the term only pays for a closure that could actually be a grip. This is the
+    credit path the 12 finger DoF never had: previously they reached the reward
+    only through object_height, which needs an already-completed grasp.
+    """
+    object_pos = env.scene["object"].data.root_pos_w
+
+    ee_thumb: FrameTransformer = env.scene[ee_thumb_cfg.name]
+    ee_thumb_t = ee_thumb.data.target_pos_w[..., 0, :]
+
+    ee_pinky: FrameTransformer = env.scene[ee_pinky_cfg.name]
+    ee_pinky_t = ee_pinky.data.target_pos_w[..., 0, :]
+
+    dist = (
+        torch.norm(object_pos - ee_thumb_t, dim=1)
+        + torch.norm(object_pos - ee_pinky_t, dim=1)
+    ) / 2.0
+    gate = 1.0 - torch.tanh(dist / std)
+
+    robot = env.scene[asset_cfg.name]
+    q = robot.data.joint_pos[:, asset_cfg.joint_ids]
+    limits = robot.data.joint_pos_limits[:, asset_cfg.joint_ids, :]
+    lower, upper = limits[..., 0], limits[..., 1]
+    closure = ((q - lower) / (upper - lower).clamp(min=1e-6)).clamp(0.0, 1.0).mean(dim=1)
+
+    return gate * closure
+
+
+def compute_lift_bonus(
+    env,
+    asset_cfg: SceneEntityCfg,
+    rest_height: float = 1.05,
+    min_lift: float = 0.02,
+):
+    """Sparse credit for a MINIMAL successful lift.
+
+    The height ramp alone barely paid for a real grasp: measured against the old
+    budget, grasping and lifting 5 cm was worth 0.42 of 8.25 points, only ~18%
+    more than hovering next to the cube doing nothing. This step is what makes
+    getting the cube off the table at all worth more than standing beside it.
+    """
+    object_z = env.scene["object"].data.root_pos_w[:, 2]
+    return (object_z > rest_height + min_lift).float()
+
+
+def compute_off_table_penalty(
+    env,
+    asset_cfg: SceneEntityCfg,
+    rest_height: float = 1.05,
+    deadband: float = 0.005,
+):
+    """Charge for knocking the cube below its resting height.
+
+    Nothing used to: measured at world z 1.00, already falling off the table,
+    object_height still paid 0.0035 and no term objected, while the episode ran
+    on for another 0.525 m of fall before object_dropped fired at z < 0.5.
+    """
+    object_z = env.scene["object"].data.root_pos_w[:, 2]
+    return (rest_height - deadband - object_z).clamp(min=0.0, max=0.5)
+
 
 def object_dropped_termination(env, asset_cfg: SceneEntityCfg, height_threshold: float = 0.5):
     """检查物体是否掉落"""
@@ -372,14 +452,29 @@ class ActionsCfg:
         use_default_offset=True,  # 使用默认偏移
     )
 
-    # # full finger
-    right_fingers = mdp.JointPositionActionCfg(
+    # Right-hand fingers, mapped to their FULL joint range.
+    #
+    # This was JointPositionActionCfg(scale=0.2, use_default_offset=True), and
+    # that made a grasp physically impossible. Every right-hand finger joint
+    # has limits [0, 1.1 .. 1.7] rad with its default at 0 (fully open), so the
+    # commandable target was default + 0.2*a, i.e. 0 .. 0.2 rad -- about 12% of
+    # the closing range -- and the whole negative half of the action space
+    # clipped at the lower limit and did nothing at all. Measured with
+    # tools/probe_grip.py: sweeping the finger actions from -1.0 to +1.0 moved
+    # the mean fingertip-to-palm distance by 0.7 mm, 0.15632 -> 0.15558. No
+    # reward could have taught a grasp through that.
+    #
+    # rescale_to_limits maps [-1, 1] onto each joint's own soft limits, so -1 is
+    # fully open and +1 fully closed for all 12 joints despite their differing
+    # ranges (thumb MCP2 0.5 rad, index MCP 1.7 rad). Note this also changes the
+    # neutral action: 0.0 is now mid-range, not the open default.
+    right_fingers = mdp.JointPositionToLimitsActionCfg(
         asset_name="robot",
         joint_names=[
             "R_thumb.*", "R_index.*", "R_middle.*", "R_ring.*", "R_pinky.*"
         ],
-        scale=0.2,
-        use_default_offset=True,
+        scale=1.0,
+        rescale_to_limits=True,
     )
 
 
@@ -489,10 +584,29 @@ class RewardsCfg:
     terminating = RewTerm(func=mdp.is_terminated, weight=-2.0)
     
     # 距离奖励 - 鼓励机器人靠近物体
-    distance_to_object = RewTerm(
+    #
+    # Two scales, because one cannot do both jobs. The original single term used
+    # std=1.0 against a 5 cm cube, which put the entire task inside the linear
+    # toe of the tanh: the slope was a flat -0.02 points/cm everywhere from 0 to
+    # 80 cm. Measured consequence after 300 iterations -- the policy parked
+    # 7.7 cm from the cube CENTRE, i.e. 5.2 cm clear of its surface, collected
+    # 92.3% of the term there, and closing that last gap was worth 0.104 of an
+    # 8.25-point budget. There was no gradient sharpening on approach at all.
+    #
+    # Dropping std alone would have broken the other end: at the 0.23-0.34 m
+    # spawn distance, std=0.05 yields ~0 reward AND ~0 slope, so there would be
+    # nothing to guide the initial reach. So: a coarse term that carries the
+    # long-range signal, and a fine term that only wakes up in the last ~10 cm.
+    reach_coarse = RewTerm(
+        func=compute_distance_reward,
+        weight=1.0,
+        params={"std": 0.30, "asset_cfg": SceneEntityCfg("object")}
+    )
+
+    reach_fine = RewTerm(
         func=compute_distance_reward,
         weight=2.0,
-        params={"std": 1.0, "asset_cfg": SceneEntityCfg("object")}
+        params={"std": 0.04, "asset_cfg": SceneEntityCfg("object")}
     )
 
     hand_height = RewTerm(
@@ -501,10 +615,40 @@ class RewardsCfg:
         params={}
     )
     
+    # 抓握奖励 - the credit path the fingers never had.
+    # Gated on proximity, so closing the hand in free space pays nothing.
+    grasp = RewTerm(
+        func=compute_grasp_reward,
+        weight=2.0,
+        params={
+            "std": 0.05,
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[
+                    "R_thumb.*", "R_index.*", "R_middle.*", "R_ring.*", "R_pinky.*"
+                ]
+            ),
+        }
+    )
+
+    # 起举奖励 - sparse step for getting the cube off the table at all.
+    lift_bonus = RewTerm(
+        func=compute_lift_bonus,
+        weight=3.0,
+        params={"asset_cfg": SceneEntityCfg("object"), "min_lift": 0.02}
+    )
+
     # 高度奖励 - 鼓励抓起物体
     object_height = RewTerm(
         func=compute_height_reward,
         weight=10.0,
+        params={"asset_cfg": SceneEntityCfg("object")}
+    )
+
+    # 掉落惩罚 - charge for sweeping the cube off the table.
+    off_table = RewTerm(
+        func=compute_off_table_penalty,
+        weight=-2.0,
         params={"asset_cfg": SceneEntityCfg("object")}
     )
 
@@ -539,11 +683,17 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     
     # 物体掉落终止
+    #
+    # 0.95 m, not 0.5 m. The table surface is at 1.025 m and the cube rests
+    # centred at 1.050 m, so the old threshold let a swept-off cube fall 0.525 m
+    # -- most of a second of physics -- before the episode ended, during which
+    # the reach terms kept paying out. 0.95 m is 7.5 cm below the table surface:
+    # unambiguously off the table, and nothing a legitimate lift ever visits.
     object_dropped = DoneTerm(
         func=object_dropped_termination,
         params={
             "asset_cfg": SceneEntityCfg("object"),
-            "height_threshold": 0.5
+            "height_threshold": 0.95
         }
     )
 
