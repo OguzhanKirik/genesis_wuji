@@ -16,6 +16,97 @@ timesteps with the bolt more than 2 cm off the table.
 
 ---
 
+# Overview — every experiment designed, and what came of it
+
+State as of 2026-09-23. All experiments grasp the same object: the 30 g bolt
+`rod-with-threads-0001` (a 2.5 cm-diameter, 3.5 cm-long rod) on the
+adam-moveit table, with the right Wuji Hand 2 on Adam-U.
+
+## The experiments
+
+| # | question it answers | what the policy controls | actions | status | headline result |
+|---|---|---|---|---|---|
+| **1** | Can PPO grasp and lift at all, with every joint free? | 7 arm joints + 20 hand joints, direct joint targets | 27 | trained | **99.4 %** still holding at the end of the episode; the grasp is a "scoop", not a pinch |
+| **2** | With the wrist fixed at a solved pose, can two finger synergies make a real pinch? | thumb synergy + fingers synergy | 2 | trained | **100 %** with 3 fingers; **0 %** with 2 fingers (exploration failure) |
+| **3** | Do glove demonstrations (BC, then PPO) make the 20-DoF hand learnable? | all 20 hand joints, wrist fixed | 20 | **designed, not trained** | none yet; blocked on the Manus glove not being detected |
+| **Pipeline, mask curriculum** | Can the wrist be added stage by stage by switching action channels on? | 6 wrist residuals through IK + 2 synergies, some masked | 8 | trained, abandoned | stage 0 **100 %**, stage 2 **0 %**, which motivated the rebuild |
+| **Pipeline, displacement curriculum** | Can the policy correct a wrong starting wrist pose, level by level? | 6 wrist residuals through IK + 2 synergies, all live | 8 | trained, **needs retraining** | L1 99.4 %, L2 99.8 %, L3 96.5 % as logged; **76–95 % on today's code** |
+
+How they build on each other:
+
+1. **Experiment 1 → 2.** Experiment 1 worked, but it wasn't a pinch.
+   Experiment 2 fixes the wrist at a solved pinch pose and makes the reward
+   contact-based.
+2. **Experiment 2 → pipeline.** Experiment 2 only works with a fixed wrist.
+   The pipeline puts the wrist back under policy control through IK:
+   - The mask curriculum failed.
+   - The displacement curriculum replaced it.
+3. **Experiment 2 → Experiment 3.** Experiment 3 takes Experiment 2's task to
+   full 20-DoF finger control. Its 2-finger failure is the evidence that
+   exploration alone doesn't find hard grasps, which is the reason for using
+   demonstrations.
+
+## Reward functions compared
+
+Weights as configured. Isaac Lab multiplies every term by dt = 1/30 s, which
+scales all terms equally (see "How the reward is computed" in the pipeline
+section). "Once" means paid on the first qualifying step of an episode only.
+
+| term | Exp 1 | Exp 2 | Exp 3 (planned) | Pipeline |
+|---|---|---|---|---|
+| alive, per step | +0.5 | — | — | — |
+| terminated early | −2 | — | — | — |
+| fingertip proximity | `reach_fine` +2, per step: 1 − mean tanh(d/4 cm), thumb + index to the bolt centre | — | — | `approach` +2 × ΔΦ, grasp phase only, capsule surface, σ 2 cm |
+| closing near the bolt | `grasp` +3, per step: proximity gate × flexion closure | — | — | — |
+| stable thumb contact | — | +0.5 once | = Exp 2 | +0.5 once |
+| stable opposing-finger contact | — | +0.5 once | = Exp 2 | +0.5 once |
+| both at once | — | +1 once | = Exp 2 | +1 once |
+| bolt off the table | `lift_bonus` +5 per step above 2 cm; `object_height` +15 × height (cap 8 cm) | — | — | — |
+| **success** (held ≥ 5 cm through the hold, bolt clear of the table, no collision, no over-force) | — (no success test) | **+20** at the last step | = Exp 2 | **+20** at the last step |
+| drop after lift | — | −5 once | = Exp 2 | −5 once |
+| finger-table collision > 15 N | — | −3 once | = Exp 2 | −3 once (tips and phalanges) |
+| fingertip force > 40 N | — | −3 once | = Exp 2 | −3 once |
+| palm/forearm/upper arm on the table | — | — | — | −5 once, and the episode ends |
+| bolt knocked below the table | `off_surface` −2 × depth | — | — | — (episode ends) |
+| wrist drift | −5 × horizontal distance² | — (wrist fixed) | — (wrist fixed) | — (the latch freezes the wrist) |
+| arm near a joint limit | — | — | — | −0.05 quadratic |
+| action rate | −5e-4 | −0.01 | = Exp 2 | −0.001 |
+| arm joint velocity | −1e-5 | — | — | — |
+
+The reward changed in three stages:
+
+1. **Experiment 1 is dense.** It pays every step for being close, closing and
+   being high. It has no notion of success, so "held" is only measured
+   afterwards by `eval_grasponly.py`.
+2. **Experiment 2 is sparse.** A +20 terminal success dominates, the one-off
+   contact bonuses mark the route to it, and one-off penalties disqualify bad
+   grasps. The per-step proximity terms are gone, because they paid for
+   hovering near the bolt.
+3. **The pipeline is Experiment 2's reward plus two additions:**
+   - one dense term, `approach`, that can't be farmed, because it pays only
+     progress toward the bolt;
+   - structural and joint-limit safety terms, needed now that the arm moves.
+
+   It also lowers `action_rate` to −0.001, because at −0.01 holding still was
+   the policy's best option.
+
+## Runs not written up anywhere else
+
+Success here is TensorBoard's `Episode_Reward/success` converted to a
+fraction of episodes. This is a training-time number, measured with
+exploration noise on, and is not an evaluation.
+
+| run | iterations | what it appears to be |
+|---|---|---|
+| `pipeline_L0/2026-09-22_15-00-23` | 650 → 1049 | resumed from a `model_650` (level 2's or level 3's, not recorded) and trained at level 0, probably on the code with the early latch; training success ~99 % |
+| `pipeline_L0/2026-09-22_13-09-38` | 650 → 714 | a short attempt at the same; ~78 % |
+| `pipeline_L0/2026-09-22_13-18-58` | 650 → 656 | aborted after a few iterations |
+| `pipeline_L3/2026-09-22_16-24-54` | 850 → 854 | aborted; mean episode length 90 instead of 150, i.e. the early latch was active — the start of retraining level 3 on the new code |
+| `pipeline_s0` 16-29, 16-37, 16-44; `pipeline_s1/2026-09-21_16-30-06`; `grasponly/2026-09-21_15-46-58`; `synergy_f3/2026-09-21_15-46-22` | 2–89 | smoke tests |
+| `adam_u_grasp`, `adam_u30_grasp` | up to 752 | the older PND-hand grasp work (September 2025 and 2026-09-04); `adam_u30_grasp/2026-09-04_14-41-15` ran 752 iterations and never lifted (`lift_bonus` ≈ 0) |
+
+---
+
 ## Experiment 1 — Wuji Hand 2, grasp-only, full joint control
 
 **Date** 2026-09-19 · **Run** `adam_u30_wuji_grasponly/2026-09-19_07-47-30` ·
@@ -34,6 +125,41 @@ timesteps with the bolt more than 2 cm off the table.
 | algorithm | PPO, rsl-rl 5.0.1, `rsl_rl_ppo_cfg.py`: actor/critic MLP 512-256-128 elu, obs normalisation, lr 1e-3 adaptive (KL 0.01), γ 0.99, λ 0.95, clip 0.2, entropy 0.005, 32 steps/env, 8 epochs, 4 minibatches |
 | command | `python adam_u_rl/scripts/train.py --robot wuji --scenario grasp --num_envs 4096 --max_iterations 600` |
 | hardware | RTX PRO 6000 Blackwell; 2.5–3.7 s / iteration at 4096 envs, ~35 min |
+
+**Goal.** The first feasibility check on the Wuji hand. With the arm and all
+20 finger joints free, does PPO find any way to get the bolt off the table
+and keep it there? The bolt spawns between the pre-curled fingers, so there
+is no reaching.
+
+**Reward in detail.** Every term is dense: paid every step, scaled by dt like
+all Isaac Lab terms. Distances are to the bolt's **centre**, not its surface.
+
+| term | weight | per-step value | purpose |
+|---|---|---|---|
+| `alive` | +0.5 | 1 | small constant, keeps episodes worth continuing |
+| `terminating` | −2 | 1 on the step an episode ends early | ending early (bolt 7.5 cm below the table) costs |
+| `reach_fine` | +2 | 1 − ½ [tanh(d_thumb / 4 cm) + tanh(d_index / 4 cm)] | pulls the thumb and index tips to the bolt; 1 at the bolt, ~0 at 10 cm |
+| `grasp` | +3 | gate × closure. gate = 1 − tanh(mean(d_thumb, d_index) / 4 cm); closure = mean flexion q / q_upper over the flexion joints | pays for curling the fingers **only when the tips are at the bolt**; curling in free air earns nothing |
+| `lift_bonus` | +5 | 1 if the bolt is > 2 cm above rest | step reward for getting it off the table at all, so lifting beats hovering |
+| `object_height` | +15 | clamp(z − z_rest, 0, 8 cm), in metres, so at most 1.2 per step | ramp for lifting higher; capped at 8 cm, which is what the ±0.2 rad arm range can lift |
+| `off_surface` | −2 | clamp(z_rest − 1 cm − z, 0, 0.5) | charges for pushing the bolt below its resting height |
+| `wrist_drift` | −5 | horizontal distance² of the wrist from its start | vertical motion is the job; horizontal wandering is not |
+| `action_rate` | −5e-4 | ‖aₜ − aₜ₋₁‖² over 27 actions | smoothness |
+| `joint_vel` | −1e-5 | Σ q̇² over the 7 arm joints | smoothness |
+
+The best possible per-step value is 0.5 + 2 + 3 + 5 + 1.2 ≈ 11.7, reached with
+the tips on the bolt, the fingers fully closed and the bolt 8 cm up. The lift
+terms (6.2) are worth more than proximity and closing (5), so the policy is
+pushed past "touch it" to "lift it". There is no success term: whether the
+bolt was *held* is measured only afterwards, by `tools/eval_grasponly.py`.
+The weights were carried over from the reach scenario and never tuned.
+
+**What the result means.** The policy lifts the bolt in 100 % of episodes and
+is still holding it at the end in 99.4 %. But it does so by curling the
+fingers under the bolt and pinning it against the thumb and palm: a scoop,
+not a pinch. The dense proximity and closure terms paid for *any* closed hand
+near the bolt, and nothing in the reward asked for opposing contact.
+Experiment 2 exists to fix that.
 
 **Pre-flight** (`tools/probe_wuji.py --scenario grasp`): spawn heights as
 predicted by the URDF kinematics; finger action +1 closes; bolt rests 11.0 mm
@@ -119,8 +245,57 @@ Playback:
 
 ## Experiment 2 — Wuji hand only, fixed wrist, two finger synergies
 
-**Date** 2026-09-19 · **Runs** `adam_u30_wuji_synergy/2026-09-19_09-06-47` (v1, four-finger rake)
-and a v2 run on the redesigned pinch · **Status** v1 complete; v2 training
+**Date** 2026-09-19 · **Runs** `adam_u30_wuji_synergy/2026-09-19_09-06-47` (v1, four-finger rake),
+`adam_u30_wuji_synergy/2026-09-19_12-08-53` (v2, 3 fingers),
+`adam_u30_wuji_synergy_f2/2026-09-19_12-19-30` (v2, 2 fingers) · **Status**
+complete: v1 99.6 %, v2 3 fingers **100 %**, v2 2 fingers **0 %**
+
+| | |
+|---|---|
+| env | `adam_u_rl/envs/wuji_synergy_grasp_env_cfg.py`; `ADAM_U_FINGERS` = 2, 3 (default) or 4 |
+| robot | the Wuji hand alone (`assets/robots/wuji_hand_right/`), wrist fixed at a solved pinch pose, with a prismatic lift joint for the scripted lift |
+| goal | a thumb-opposed pinch that holds the bolt through a lift, not just any closed hand |
+| actions | 2: thumb synergy and fingers synergy, each from −1 (open pose) to +1 (closed pose), smoothed by α = 0.3 per step. Ring and little are held flat |
+| observations | 26 (3 fingers): 9 synergy joint positions + 9 velocities, last action (2), fingertip force on the bolt ÷ 40 N (3), contact flags (3) |
+| episode | 120 steps at 30 Hz: **GRASP** 60 (2 s, policy acts), **LIFT** 30 (scripted 10 cm), **HOLD** 30 (scripted, verification) |
+| algorithm | PPO, `RslRlWujiSynergyPPORunnerCfg`: actor/critic MLP 128-128 elu, init std 0.5, lr 3e-4 fixed, entropy 0.01, γ 0.99, λ 0.95, clip 0.2, 24 steps/env, 5 epochs, 4 minibatches |
+| command | `docker compose exec [-e ADAM_U_FINGERS=2] adam_rl python adam_u_rl/scripts/train.py --robot wuji --scenario synergy --num_envs 1024` (500 iterations, ~6 min) |
+
+**Reward in detail.** It is sparse: nothing pays per step except the small
+action-rate cost. The same bookkeeping, force measurement and success test
+carry over unchanged to the pipeline, whose Reward section has the full
+mechanics: how fingertip-on-bolt force is measured, what "stable" means, and
+the dt scaling.
+
+| term | weight | paid when |
+|---|---|---|
+| `thumb_contact` | +0.5 | once: thumb tip on the bolt > 0.1 N for 4 consecutive steps |
+| `finger_contact` | +0.5 | once: index or middle tip the same |
+| `opposing_contact` | +1.0 | once: both stable at the same time |
+| `success` | **+20** | step 120: bolt > 5 cm above rest for all 30 hold steps, never touching the table during the hold, no finger-table hit > 15 N and no fingertip force > 40 N anywhere in the episode |
+| `drop` | −5 | once: the bolt was > 2 cm up after the grasp phase, then came back below 2 cm |
+| `table_contact` | −3 | once: any fingertip pushes the table > 15 N (also voids success) |
+| `excess_force` | −3 | once: any fingertip's net force > 40 N (also voids success) |
+| `action_rate` | −0.01 | every step: ‖aₜ − aₜ₋₁‖² over the 2 actions |
+
+Why it is shaped this way:
+
+- **Contact bonuses are paid once, and only after 4 steps.** Paid per step,
+  60 grasp steps of contact would outweigh the +20. Paid on the first touch,
+  exploration noise brushing the bolt would collect them.
+- **Success is the only term that says the task was done**, and it is 10× all
+  the contact bonuses together. The penalties both cost points and void the
+  success, so a grasp that works only by ploughing into the table or crushing
+  the bolt scores worse than not grasping at all.
+- **A clean success is worth 22.0. A pinch that lifts, then drops is −3.0.
+  Never touching the bolt is 0.**
+
+**The weakness this reward has, measured.** The 2-finger run exposed it: a
+reward a random policy collects in full carries no gradient. Exploration
+noise tripped all three contact bonuses in every episode while the policy's
+mean stayed fully open. With +20 out of reach by chance, the only slope left
+was `action_rate`, which rewards holding any constant action. The pipeline's
+`approach` term and its −0.001 action rate are the fixes for exactly this.
 
 ### v2 — the spec implemented literally (thumb-opposed pinch)
 
@@ -231,11 +406,81 @@ table collisions and no force violations, at a partial closure of (0.59, 0.53).
 Learning curve, settings and the v1 pre-flight sweeps are in this file's git
 history. Videos: `logs/rsl_rl/adam_u30_wuji_synergy/2026-09-19_09-06-47/videos/`.
 
-## Planned
+## Still open for Experiment 2
 
-- Experiment 2 v2 evaluation, and a two-finger (`ADAM_U_FINGERS=2`) comparison.
-- Experiment 2 with bolt/hand pose randomisation (±5 mm, ±1 cm, ±2 cm) to
-  measure the basin the learned closure covers.
+- Bolt/hand pose randomisation (±5 mm, ±1 cm, ±2 cm), to measure the basin the
+  learned closure covers. The pipeline's displacement curriculum answers a
+  version of this with the wrist free.
+- Three untried ways to make 2 fingers work:
+  - a dense grasp term;
+  - a pose with more squeeze margin;
+  - starting from the 3-finger policy.
+
+---
+
+## Experiment 3 — imitation learning, then reinforcement learning (designed, not trained)
+
+**Status** Environment, glove link, retarget bridge and recorder are built.
+They were validated end to end with a **synthetic** glove: 5/5 episodes
+recorded and labelled SUCCESS, no packet loss. **No demonstrations recorded,
+no training.** Blocked on the real Manus glove: the SDK detects no glove, so
+`/manus_glove_0` has zero publishers (`TODO.md` §2a).
+Full design: [`docs/EXPERIMENT3_DESIGN.md`](docs/EXPERIMENT3_DESIGN.md).
+
+**Goal.** Show that human demonstrations make a hard action space learnable.
+Pure PPO already solves Experiment 2's 2-synergy task at 100 %, so
+demonstrations would prove nothing there. Experiment 3 controls **all 20**
+finger joints, where exploration is expected to fail. The Manus glove's 20
+ergonomic angles map one to one onto the Wuji hand's 20 joints.
+
+| | |
+|---|---|
+| env | `adam_u_rl/envs/wuji_teleop_grasp_env_cfg.py` |
+| robot | the Wuji hand alone, wrist fixed at Experiment 2's pinch pose |
+| actions | 20: one per joint, q_target = q_lower + (a + 1)/2 · (q_upper − q_lower), so −1 is the joint's lower limit and +1 its upper; `A_OPEN` is the action vector that reproduces the pre-grasp pose. (The design doc maps −1 to the pre-grasp pose instead; the built env uses the full range.) |
+| observations | 66: 20 joint positions + 20 velocities, last action (20), fingertip force on the bolt (3), contact flags (3) |
+| episode | the same as Experiment 2: GRASP 60 steps, then the scripted LIFT 30 and HOLD 30 |
+| reward and success | **identical to Experiment 2** (table above), so every stage is scored by the same test |
+
+**Planned stages.**
+
+1. **Record.** The operator wears the glove, and the simulated hand mirrors
+   their fingers from the pre-grasp pose. The data path is:
+   glove → `manus_ros2` → `tools/manus_wuji_bridge.py` → UDP →
+   `tools/record_demo.py`.
+   - Each demonstration is labelled success or failure automatically, by
+     Experiment 2's test.
+   - The target is 20–50 successful ones. Record one and replay it first.
+2. **Data tooling.** `tools/demo_io.py` validates, resamples, clamps and
+   splits by trajectory. `tools/replay_demo.py` checks that a recording still
+   succeeds when replayed open-loop. Neither is written yet.
+3. **Behaviour cloning.** Regression from observation to the **commanded**
+   action over the grasp phase of the successful demonstrations.
+   - Loss: Gaussian NLL, so the learned std carries into PPO.
+   - Network: the same as the PPO actor.
+   - The observation normaliser is frozen into the checkpoint.
+   - Not written yet: rsl-rl 5.0.1 has no auxiliary-loss hook.
+4. **PPO fine-tuning.** Load the BC actor; the critic starts fresh. Use lr
+   ~1e-4 and start from the BC std. The reward is Experiment 2's.
+   - Fallback: 5 per-finger synergies instead of 20 joints.
+
+**What would make it conclusive.** Four policies on the same 512-episode
+protocol:
+
+1. PPO-only at 20 DoF, from scratch;
+2. BC only;
+3. BC, then PPO;
+4. Experiment 2's 3-finger policy as the 100 % reference.
+
+Also: how many demonstrations are needed, with BC on 5, 10, 20 and 50.
+
+The experiment succeeds if **PPO-only fails and BC + PPO succeeds**. If
+PPO-only also succeeds, the task didn't need demonstrations. That is a real
+result, but a different one.
+
+**The question to answer first.** Can a human produce a working grasp through
+the glove from this pose? The fingertips start 1.6 cm from the bolt with a
+5.2 cm thumb-to-finger gap. One recorded demonstration answers it.
 
 ---
 
