@@ -27,7 +27,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation as R
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-URDF = os.path.join(HERE, "..", "adam_u_isaac_lab", "assets", "robots", "adam_u_wuji", "urdf", "adam_u_wuji.urdf")
+URDF = os.path.join(HERE, "..", "assets", "robots", "adam_u_wuji", "urdf", "adam_u_wuji.urdf")
 ROOT_Z = 1.05 - 0.99975
 
 ARM = ["shoulderPitch_Right", "shoulderRoll_Right", "shoulderYaw_Right",

@@ -33,7 +33,7 @@ Decide before committing:
   the tools here, but the PND robot's USD was committed deliberately (see the
   README) because regenerating it needs an image this repo no longer builds.
   The same argument applies to these. Recommend committing them.
-- **`adam_u_isaac_lab/demos/`** held scratch recordings from the recorder check.
+- **`demos/`** held scratch recordings from the recorder check.
   Those files are deleted. The directory stays gitignored so a new recording
   is not committed by accident.
 - **`logs/`** is already gitignored, so the four trained runs are local only.

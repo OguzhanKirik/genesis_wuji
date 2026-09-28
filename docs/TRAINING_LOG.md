@@ -6,8 +6,8 @@ reading these logs — is in [`ALGORITHM.md`](ALGORITHM.md).
 One entry per training run worth remembering: what was trained, on which env
 config, with which command, and what came out. Smoke runs (a handful of
 iterations to see that the code runs) are listed once per config, not per run.
-Checkpoints live under `adam_u_isaac_lab/logs/rsl_rl/<experiment>/<timestamp>/`
-(gitignored); TensorBoard: `tensorboard --logdir adam_u_isaac_lab/logs/rsl_rl`.
+Checkpoints live under `logs/rsl_rl/<experiment>/<timestamp>/`
+(gitignored); TensorBoard: `tensorboard --logdir logs/rsl_rl`.
 
 Conventions: "mean reward" and the per-term values are rsl-rl's console
 numbers, i.e. mean per-step reward over the last iteration. The lift bonus

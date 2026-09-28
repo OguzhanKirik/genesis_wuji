@@ -197,7 +197,7 @@ python genesis_rl/scripts/train.py --robot wuji --scenario synergy \
 Watch the curve while it runs, from the **HOST**:
 
 ```bash
-tensorboard --logdir adam_u_isaac_lab/logs/rsl_rl
+tensorboard --logdir logs/rsl_rl
 ```
 
 Remember the log scaling: `Episode_Reward/success` is divided by the episode
@@ -242,7 +242,7 @@ python3 tools/make_wuji_hand_urdf.py --fingers 3   # the right hand alone
 #    Isaac Lab 3.0's own importer nests rigid bodies and breaks the
 #    environment's prim paths, so the conversion must happen on 2.3.2.
 docker run --rm --gpus all \
-    -v $PWD/adam_u_isaac_lab:/workspace -v $PWD/tools:/opt/tools:ro \
+    -v $PWD:/workspace -v $PWD/tools:/opt/tools:ro \
     -v adam-wbc_isaac-cache-kit:/opt/venv/lib/python3.11/site-packages/isaacsim/kit/cache \
     -v adam-wbc_isaac-cache-ov:/root/.cache/ov -v adam-wbc_isaac-cache-nvidia:/root/.nv \
     -e OMNI_KIT_ACCEPT_EULA=YES -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y \
@@ -253,7 +253,7 @@ docker run --rm --gpus all \
     --needed r_wrist r_thumb_distal r_index_finger_distal r_middle_finger_distal
 
 # the files come back owned by root
-docker run --rm -v $PWD/adam_u_isaac_lab:/workspace --entrypoint bash \
+docker run --rm -v $PWD:/workspace --entrypoint bash \
     adam-u-rl:isaaclab-3.0 -c "chown -R $(id -u):$(id -g) /workspace/assets"
 ```
 

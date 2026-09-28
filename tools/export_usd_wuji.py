@@ -9,7 +9,7 @@ bodies as direct children of the default prim. This repo no longer builds a
 2.3.2 image, but adam-wbc's `adam-lite-wbc:isaaclab-2.3.2` is one:
 
     docker run --rm --gpus all \\
-        -v $PWD/adam_u_isaac_lab:/workspace -v $PWD/tools:/opt/tools:ro \\
+        -v $PWD:/workspace -v $PWD/tools:/opt/tools:ro \\
         -v adam-wbc_isaac-cache-kit:/opt/venv/lib/python3.11/site-packages/isaacsim/kit/cache \\
         -v adam-wbc_isaac-cache-ov:/root/.cache/ov -v adam-wbc_isaac-cache-nvidia:/root/.nv \\
         --entrypoint python adam-lite-wbc:isaaclab-2.3.2 /opt/tools/export_usd_wuji.py

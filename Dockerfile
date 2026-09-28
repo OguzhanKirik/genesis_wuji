@@ -85,7 +85,9 @@ ENV ISAACLAB_PATH=/opt/IsaacLab30
 # --- project code -----------------------------------------------------------
 WORKDIR /workspace
 COPY tools/ /opt/tools/
-COPY adam_u_isaac_lab/ /workspace/
+COPY genesis_rl /workspace/genesis_rl
+COPY assets /workspace/assets
+COPY pyproject.toml /workspace/pyproject.toml
 
 # Editable install so `import genesis_rl` does not depend on the working
 # directory. The compose file bind-mounts the checkout over /workspace, and

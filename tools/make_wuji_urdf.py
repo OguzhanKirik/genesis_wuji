@@ -48,7 +48,7 @@ REPO = os.path.dirname(HERE)
 DEFAULT_MOVEIT = "/home/revel/adam-moveit"
 XACRO_REL = "ws/src/adam_u_description/urdf/adam_u_body_genesis_wuji.xacro"
 MESH_REL = "ws/src/adam_u_description/meshes"
-OUT_DIR = os.path.join(REPO, "adam_u_isaac_lab", "assets", "robots", "adam_u_wuji")
+OUT_DIR = os.path.join(REPO, "assets", "robots", "adam_u_wuji")
 
 PKG_VISUAL = "package://adam_u_description/meshes/genesis_wuji/"
 PKG_HULL = "package://adam_u_description/meshes/genesis_wuji_collision_hull/"

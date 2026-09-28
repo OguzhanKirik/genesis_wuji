@@ -42,7 +42,7 @@ services:
     volumes:
       # The whole checkout, live: host edits take effect with no rebuild, and
       # logs/ lands back on the host.
-      - ./adam_u_isaac_lab:/workspace
+      - .:/workspace
       # tools/ mounted so the diagnostics track the repo without a rebuild.
       - ./tools:/opt/tools:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw

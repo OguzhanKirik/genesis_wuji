@@ -30,7 +30,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ASSETS = os.path.join(HERE, "..", "adam_u_isaac_lab", "assets", "robots")
+ASSETS = os.path.join(HERE, "..", "assets", "robots")
 SRC = os.path.join(ASSETS, "adam_u_wuji", "urdf", "adam_u_wuji.urdf")
 def out_path(fingers: int) -> str:
     """One asset per finger count: each solved pose has its own lift axis, which

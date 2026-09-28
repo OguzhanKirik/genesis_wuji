@@ -32,7 +32,7 @@ if [ ! -f "$USD" ]; then
              It is committed to this repo, so it should be here. If you
              deleted it, restore with:
 
-               git checkout -- adam_u_isaac_lab/assets/robots/adam_u/usd/
+               git checkout -- assets/robots/adam_u/usd/
 
              Regenerating it needs the Isaac Sim 5.1 / Isaac Lab 2.3.2 image,
              which this repo no longer builds -- 3.0's own URDF importer nests
