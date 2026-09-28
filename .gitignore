@@ -11,8 +11,3 @@ __pycache__/
 **/__pycache__/
 *.pyc
 .venv/
-# USD robot/scene files: too large for GitHub (adam_u_base.usd is 109 MB).
-# Regenerate with tools/export_usd_wuji.py or keep them out of band.
-*.usd
-*.usda
-*.usdc

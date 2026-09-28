@@ -41,9 +41,10 @@ One image trains and renders: Isaac Sim **6.0** / Isaac Lab **3.0**.
 Isaac Lab 3.0 is beta. A later commit can break this image; the pin above is
 the one verified here.
 
-Robots spawn from a flat USD under `assets/`. Those `.usd` files are not in
-git. A checkout needs them on disk or the container entrypoint stops. Rebuild
-them with the commands in [`docs/COMMANDS.md`](docs/COMMANDS.md).
+Robots spawn from a flat USD under `assets/`. Those files are in git.
+`assets/robots/adam_u/usd/configuration/adam_u_base.usd` is 104 MiB, over
+GitHub's 100 MiB file limit, so it is stored with Git LFS. After a clone, run
+`git lfs pull` if that file is still a pointer.
 
 ## Start
 
