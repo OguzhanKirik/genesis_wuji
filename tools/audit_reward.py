@@ -49,8 +49,8 @@ import torch  # noqa: E402
 
 from isaaclab.envs import ManagerBasedRLEnv  # noqa: E402
 
-from adam_u_rl.envs import wuji_pipeline_env_cfg as P  # noqa: E402
-from adam_u_rl.envs import wuji_synergy_grasp_env_cfg as C  # noqa: E402
+from genesis_rl.envs import wuji_pipeline_env_cfg as P  # noqa: E402
+from genesis_rl.envs import wuji_synergy_grasp_env_cfg as C  # noqa: E402
 
 cfg = P.WujiPipelineEnvCfg()
 cfg.scene.num_envs = args.num_envs

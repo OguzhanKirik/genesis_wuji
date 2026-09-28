@@ -46,13 +46,13 @@ app = AppLauncher(headless=True).app
 import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
 
-from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import LAYOUT, _t  # noqa: E402
+from genesis_rl.envs.adam_u_wuji_grasp_env_cfg import LAYOUT, _t  # noqa: E402
 
 if _args.scenario == "grasp":
-    from adam_u_rl.envs.adam_u_wuji_grasponly_env_cfg import AdamUWujiGraspOnlyEnvCfg as AdamUWujiGraspEnvCfg  # noqa: E402
-    from adam_u_rl.envs.adam_u_wuji_grasponly_env_cfg import BOLT_XY  # noqa: E402
+    from genesis_rl.envs.adam_u_wuji_grasponly_env_cfg import AdamUWujiGraspOnlyEnvCfg as AdamUWujiGraspEnvCfg  # noqa: E402
+    from genesis_rl.envs.adam_u_wuji_grasponly_env_cfg import BOLT_XY  # noqa: E402
 else:
-    from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import AdamUWujiGraspEnvCfg  # noqa: E402
+    from genesis_rl.envs.adam_u_wuji_grasp_env_cfg import AdamUWujiGraspEnvCfg  # noqa: E402
     BOLT_XY = LAYOUT["bolt_center_xy"]
 
 cfg = AdamUWujiGraspEnvCfg()

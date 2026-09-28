@@ -141,13 +141,13 @@ before anything happens — a grasp takes about a second at full speed.
 
 ```bash
 docker compose run --rm -e DISPLAY=:1 adam_rl \
-  python adam_u_rl/scripts/play.py --robot wuji --scenario synergy \
+  python genesis_rl/scripts/play.py --robot wuji --scenario synergy \
     --viz kit --num_envs 4 --real-time --speed 0.25 --start-delay 25 --steps 600 \
     --checkpoint_path logs/rsl_rl/adam_u30_wuji_synergy/2026-09-19_12-08-53/model_499.pt
 
 # Experiment 1 (the whole robot, arm and hand)
 docker compose run --rm -e DISPLAY=:1 adam_rl \
-  python adam_u_rl/scripts/play.py --robot wuji --scenario grasp \
+  python genesis_rl/scripts/play.py --robot wuji --scenario grasp \
     --viz kit --num_envs 4 --real-time --speed 0.3 --start-delay 20 --steps 900 \
     --checkpoint_path logs/rsl_rl/adam_u30_wuji_grasponly/2026-09-19_07-47-30/model_599.pt
 ```
@@ -161,36 +161,36 @@ serves to a browser, so it works from another machine. Omit `--viz` for headless
 
 ```bash
 # Experiment 2, three fingers -- ~6 min, solves by iteration ~400
-python adam_u_rl/scripts/train.py --robot wuji --scenario synergy \
+python genesis_rl/scripts/train.py --robot wuji --scenario synergy \
     --num_envs 1024 --max_iterations 500
 
 # two fingers (needs ADAM_U_FINGERS on the container, not just the shell)
-ADAM_U_FINGERS=2 python adam_u_rl/scripts/train.py --robot wuji --scenario synergy \
+ADAM_U_FINGERS=2 python genesis_rl/scripts/train.py --robot wuji --scenario synergy \
     --num_envs 1024 --max_iterations 500
 
 # Experiment 1, grasp-only -- ~35 min
-python adam_u_rl/scripts/train.py --robot wuji --scenario grasp \
+python genesis_rl/scripts/train.py --robot wuji --scenario grasp \
     --num_envs 4096 --max_iterations 600
 
 # the reach scenario, and the bin layout variant
-python adam_u_rl/scripts/train.py --robot wuji --num_envs 4096
-ADAM_U_WORKCELL=bin python adam_u_rl/scripts/train.py --robot wuji --num_envs 4096
+python genesis_rl/scripts/train.py --robot wuji --num_envs 4096
+ADAM_U_WORKCELL=bin python genesis_rl/scripts/train.py --robot wuji --num_envs 4096
 
 # the original PND-hand cube task
-python adam_u_rl/scripts/train.py --num_envs 4096
+python genesis_rl/scripts/train.py --num_envs 4096
 ```
 
 From the **HOST** with `run --rm`, pass the variables through explicitly:
 
 ```bash
 docker compose run --rm -e ADAM_U_FINGERS=2 adam_rl \
-  python adam_u_rl/scripts/train.py --robot wuji --scenario synergy --num_envs 1024
+  python genesis_rl/scripts/train.py --robot wuji --scenario synergy --num_envs 1024
 ```
 
 Quick smoke test of any of the above, about 30 seconds:
 
 ```bash
-python adam_u_rl/scripts/train.py --robot wuji --scenario synergy \
+python genesis_rl/scripts/train.py --robot wuji --scenario synergy \
     --num_envs 16 --max_iterations 3
 ```
 
@@ -202,7 +202,7 @@ tensorboard --logdir adam_u_isaac_lab/logs/rsl_rl
 
 Remember the log scaling: `Episode_Reward/success` is divided by the episode
 length, so multiply by **120** to read it as a reward. 0.1667 means 100 %
-success. See `docs/ALGORITHM.md` section 8.
+success. See `ALGORITHM.md` section 8.
 
 ---
 
@@ -263,11 +263,54 @@ refuses to start if they disagree.
 
 ---
 
+## 6b. Experiment 4: safe reach-to-grasp (`--scenario reach_grasp`)
+
+Design: [`EXPERIMENT4_DESIGN.md`](EXPERIMENT4_DESIGN.md). The level is
+`ADAM_U_RG_LEVEL` (0 gate, 1-4 standoff and pose error, 5 physics, 6-7
+perception, 8 clutter), and it MUST be passed with `docker compose exec -e`.
+
+```bash
+# HOST: arm poses and reset Jacobians for the standoff buckets (paste block)
+python3 tools/solve_reach_grasp_poses.py --heights 0 0.05 0.10 --verify
+
+# regression tests (43 checks at level 0; perception checks need level 6 or 7)
+docker compose exec -e ADAM_U_RG_LEVEL=0 adam_rl python /opt/tools/test_reach_grasp.py
+docker compose exec -e ADAM_U_RG_LEVEL=6 adam_rl python /opt/tools/test_reach_grasp.py --only 8
+
+# geometry gate (level 0) / scripted baseline (any level) / reward audit
+docker compose exec -e ADAM_U_RG_LEVEL=0 adam_rl python /opt/tools/audit_reach_grasp.py --episodes 128
+docker compose exec -e ADAM_U_RG_LEVEL=3 adam_rl python /opt/tools/audit_reach_grasp.py
+
+# train a level; resume the next from the previous level's BEST checkpoint
+docker compose exec -e ADAM_U_RG_LEVEL=1 adam_rl python genesis_rl/scripts/train.py \
+    --robot wuji --scenario reach_grasp --num_envs 2048 --max_iterations 400
+docker compose exec -e ADAM_U_RG_LEVEL=2 adam_rl python genesis_rl/scripts/train.py \
+    --robot wuji --scenario reach_grasp --num_envs 2048 --max_iterations 400 \
+    --resume --checkpoint_path logs/rsl_rl/adam_u30_wuji_reach_grasp_L1/<run>/model_<best>.pt --reset-std 0.3
+
+# evaluate against the advancement gate (512 episodes, mean action)
+docker compose exec -e ADAM_U_RG_LEVEL=1 adam_rl python /opt/tools/eval_reach_grasp.py \
+    --checkpoint_path logs/rsl_rl/adam_u30_wuji_reach_grasp_L1/<run>/model_<best>.pt --num_envs 256 --episodes 512
+
+# watch it
+docker compose exec -e ADAM_U_RG_LEVEL=1 adam_rl python genesis_rl/scripts/play.py --robot wuji \
+    --scenario reach_grasp --viz kit --num_envs 4 --real-time --speed 0.25 --start-delay 15 \
+    --checkpoint_path logs/rsl_rl/adam_u30_wuji_reach_grasp_L1/<run>/model_<best>.pt
+```
+
+TensorBoard for these runs carries `Safety/*`, `Clearance/*`, `Wrist/*`,
+`Phase/*` and `Outcome/*` alongside `Episode_Reward/*`; the env publishes
+them after Isaac Lab's reset, which is why the pipeline's never appeared.
+
+---
+
 ## 7. Environment variables
 
 | variable | values | effect |
 |---|---|---|
 | `ADAM_U_FINGERS` | `2`, `3` (default), `4` | how many fingers oppose the thumb in Experiment 2 |
+| `ADAM_U_LEVEL` | `0`..`3` | displacement level of the staged pipeline |
+| `ADAM_U_RG_LEVEL` | `0`..`8` | curriculum level of Experiment 4 (`--scenario reach_grasp`) |
 | `ADAM_U_WORKCELL` | `single` (default), `bin` | bare table, or adam-moveit's bin, for Experiments 1 and the reach scenario |
 | `WORKCELL_SIDE` | `right` (default), `left` | mirror the workcell for the training arm |
 | `ADAM_U_ASSETS` | path | override the asset root |

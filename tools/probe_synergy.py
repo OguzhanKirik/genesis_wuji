@@ -60,8 +60,8 @@ app = AppLauncher(headless=True).app
 import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
 
-from adam_u_rl.envs import wuji_synergy_grasp_env_cfg as C  # noqa: E402
-from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import _t  # noqa: E402
+from genesis_rl.envs import wuji_synergy_grasp_env_cfg as C  # noqa: E402
+from genesis_rl.envs.adam_u_wuji_grasp_env_cfg import _t  # noqa: E402
 
 cfg = C.WujiSynergyGraspEnvCfg()
 cfg.scene.num_envs = args.num_envs

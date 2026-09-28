@@ -87,7 +87,12 @@ WORKDIR /workspace
 COPY tools/ /opt/tools/
 COPY adam_u_isaac_lab/ /workspace/
 
-ENV PYTHONPATH=/workspace:/workspace/adam_u_rl:/workspace/adam_u_rl/scripts
+# Editable install so `import genesis_rl` does not depend on the working
+# directory. The compose file bind-mounts the checkout over /workspace, and
+# the egg-link still points there, so host edits stay live.
+RUN uv pip install --no-deps -e /workspace
+
+ENV PYTHONPATH=/workspace:/workspace/genesis_rl:/workspace/genesis_rl/scripts
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

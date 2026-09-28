@@ -65,8 +65,8 @@ import gymnasium as gym  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import glove_link as G  # noqa: E402
 
-from adam_u_rl.envs import wuji_teleop_grasp_env_cfg as C  # noqa: E402
-from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import _t  # noqa: E402
+from genesis_rl.envs import wuji_teleop_grasp_env_cfg as C  # noqa: E402
+from genesis_rl.envs.adam_u_wuji_grasp_env_cfg import _t  # noqa: E402
 
 # The wire order and the env's joint order must be the same list, or the glove
 # drives the wrong fingers and it looks like bad calibration.

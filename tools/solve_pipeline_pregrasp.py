@@ -35,7 +35,7 @@ and reports the pose with the most margin, plus the reach envelope around it.
     python3 tools/solve_pipeline_pregrasp.py --yaw 90         # force a yaw
 
 Everything it prints is meant to be pasted into
-adam_u_rl/envs/wuji_pipeline_env_cfg.py, and the --envelope report is the
+genesis_rl/envs/wuji_pipeline_env_cfg.py, and the --envelope report is the
 "reach-envelope test" the architecture spec asks for.
 """
 
@@ -62,7 +62,7 @@ def _load_solver():
 
 
 # Experiment 2's solved three-finger pinch, from POSE[3] in
-# adam_u_rl/envs/wuji_synergy_grasp_env_cfg.py. r_wrist is joined to
+# genesis_rl/envs/wuji_synergy_grasp_env_cfg.py. r_wrist is joined to
 # wristRollRight by a fixed joint with an IDENTITY origin, so HAND_ROT is the
 # orientation of the arm's wrist body directly -- no offset to compose.
 HAND_ROT = (-0.6447, -0.3871, 0.0000, 0.6592)   # (x, y, z, w)

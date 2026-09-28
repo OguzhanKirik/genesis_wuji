@@ -41,9 +41,9 @@ from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg  # noqa: E402
 
-from adam_u_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlAdamUGraspPPORunnerCfg  # noqa: E402
-from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import LAYOUT, RIGHT_HAND_FLEXION, _t  # noqa: E402
-from adam_u_rl.envs.adam_u_wuji_grasponly_env_cfg import AdamUWujiGraspOnlyEnvCfg  # noqa: E402
+from genesis_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlAdamUGraspPPORunnerCfg  # noqa: E402
+from genesis_rl.envs.adam_u_wuji_grasp_env_cfg import LAYOUT, RIGHT_HAND_FLEXION, _t  # noqa: E402
+from genesis_rl.envs.adam_u_wuji_grasponly_env_cfg import AdamUWujiGraspOnlyEnvCfg  # noqa: E402
 
 device = "cuda:0"
 cfg = AdamUWujiGraspOnlyEnvCfg()

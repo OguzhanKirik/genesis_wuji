@@ -63,9 +63,9 @@ import torch  # noqa: E402
 
 from isaaclab.envs import ManagerBasedRLEnv  # noqa: E402
 
-from adam_u_rl.envs import wuji_pipeline_env_cfg as P  # noqa: E402
-from adam_u_rl.envs.wuji_pipeline_env_cfg import CONTROL_DT  # noqa: E402
-from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import _t  # noqa: E402
+from genesis_rl.envs import wuji_pipeline_env_cfg as P  # noqa: E402
+from genesis_rl.envs.wuji_pipeline_env_cfg import CONTROL_DT  # noqa: E402
+from genesis_rl.envs.adam_u_wuji_grasp_env_cfg import _t  # noqa: E402
 
 RESULTS: list[tuple[str, bool, str]] = []
 

@@ -209,7 +209,7 @@ def main() -> int:
         d = Rm @ (r["thumb_track"][k] - r["thumb_track"][0]); d[2] = 0.0
         yaw = float(np.degrees(np.arctan2(d[1], d[0]))) if np.linalg.norm(d) > 1e-9 else 0.0
         print(f"  pinch point (wrist frame) {r['P'].round(4)}, world-up in that frame {r['u'].round(4)}")
-        print("\n  paste into POSE in adam_u_rl/envs/wuji_synergy_grasp_env_cfg.py:\n")
+        print("\n  paste into POSE in genesis_rl/envs/wuji_synergy_grasp_env_cfg.py:\n")
         print(f"    {len(_active(args)) + 1}: dict(")
         print(f"        thumb_abd={a:.2f}, open_curl={o:.2f}, closed_curl={c:.2f},")
         print(f"        lift_axis=({r['u'][0]:.6f}, {r['u'][1]:.6f}, {r['u'][2]:.6f}),")

@@ -64,8 +64,8 @@ from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg  # noqa: E402
 
-from adam_u_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlWujiSynergyPPORunnerCfg  # noqa: E402
-from adam_u_rl.envs import wuji_synergy_grasp_env_cfg as C  # noqa: E402
+from genesis_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlWujiSynergyPPORunnerCfg  # noqa: E402
+from genesis_rl.envs import wuji_synergy_grasp_env_cfg as C  # noqa: E402
 
 device = "cuda:0"
 cfg = C.WujiSynergyGraspEnvCfg()

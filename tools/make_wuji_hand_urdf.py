@@ -46,7 +46,7 @@ LIFT_RANGE = 0.20
 # "world up expressed in the hand frame" (the vector tools/find_pinch_pose.py
 # prints as LIFT_AXIS) makes the joint travel exactly world-vertical once the
 # hand is rotated. Keep this in step with HAND_ROT in the env config.
-# One per finger count, matching POSE in adam_u_rl/envs/wuji_synergy_grasp_env_cfg.py.
+# One per finger count, matching POSE in genesis_rl/envs/wuji_synergy_grasp_env_cfg.py.
 LIFT_AXIS_BY_FINGERS = {
     2: (0.158346, -0.987375, 0.004167),
     3: (0.510345, -0.849959, -0.130833),

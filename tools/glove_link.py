@@ -47,7 +47,7 @@ FLAG_ENGAGED = 1 << 0        # the operator is driving; otherwise hold the pre-g
 FLAG_RESET = 1 << 1          # start a new episode
 FLAG_MARK_SUCCESS = 1 << 2   # operator asserts this attempt was good
 
-# Must match adam_u_rl/envs/wuji_teleop_grasp_env_cfg.HAND_JOINTS. Duplicated
+# Must match genesis_rl/envs/wuji_teleop_grasp_env_cfg.HAND_JOINTS. Duplicated
 # rather than imported because the sender runs in the ROS container, which
 # cannot import Isaac Lab. verify_joint_order() checks the two agree.
 HAND_JOINTS = [

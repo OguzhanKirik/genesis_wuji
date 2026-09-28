@@ -23,7 +23,7 @@ import argparse
 import sys
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--pkg", default="adam_u_rl", help="package to load the env config from")
+parser.add_argument("--pkg", default="genesis_rl", help="package to load the env config from")
 parser.add_argument("--num_envs", type=int, default=4)
 args, _ = parser.parse_known_args()
 sys.argv = [sys.argv[0]]
@@ -35,7 +35,7 @@ app = AppLauncher(headless=True).app
 import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
 
-from adam_u_rl.envs.adam_u_grasp_env_cfg import AdamUGraspEnvCfg
+from genesis_rl.envs.adam_u_grasp_env_cfg import AdamUGraspEnvCfg
 
 cfg = AdamUGraspEnvCfg()
 cfg.scene.num_envs = args.num_envs

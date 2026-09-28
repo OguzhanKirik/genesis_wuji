@@ -6,11 +6,11 @@ services:
   #     docker compose exec adam_rl bash
   #
   #     # headless training (omit --viz)
-  #     python adam_u_rl/scripts/train.py --num_envs 4096
+  #     python genesis_rl/scripts/train.py --num_envs 4096
   #     # train with the RTX viewport open
-  #     python adam_u_rl/scripts/train.py --viz kit --num_envs 16
+  #     python genesis_rl/scripts/train.py --viz kit --num_envs 16
   #     # watch a trained policy
-  #     python adam_u_rl/scripts/play.py --viz kit --num_envs 4 --real-time \
+  #     python genesis_rl/scripts/play.py --viz kit --num_envs 4 --real-time \
   #         --checkpoint_path logs/rsl_rl/adam_u30_grasp/<run>/model_N.pt
   #     # sanity-check the robot spawns upright
   #     python /opt/tools/compare_pose.py

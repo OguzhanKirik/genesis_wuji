@@ -42,7 +42,7 @@ changes. Expect this to need repair on update; this repo's git history is a
 worked example of what that looks like.
 
 **What to do next**, and the state of every experiment, is in
-[`TODO.md`](TODO.md).
+[`docs/TODO.md`](docs/TODO.md).
 
 **Every command** — start, test, train, evaluate, watch, rebuild assets — is
 collected in [`docs/COMMANDS.md`](docs/COMMANDS.md).
@@ -55,7 +55,8 @@ in [`docs/ALGORITHM.md`](docs/ALGORITHM.md).
 ## Layout
 
 ```
-TODO.md                     state of every experiment and what to do next
+docs/TODO.md                state of every experiment and what to do next
+docs/TRAINING_LOG.md        run-by-run numbers, curves, and commands
 docs/ALGORITHM.md           how the RL algorithm works, end to end
 docs/COMMANDS.md            every command: test, train, evaluate, watch
 Dockerfile                  Isaac Sim 6.0 / Isaac Lab 3.0
@@ -63,43 +64,22 @@ docker-compose.yml          one service, `adam_rl`
 docker/
   requirements.lock.txt     258 pins, frozen from a verified environment
   entrypoint.sh             CUDA, USD and X11 preflight
-tools/
-  sanitize_dae.py           makes the Collada meshes legal for USD import
-  compare_pose.py           checks the robot spawns upright  <- run after any
-                            change to init_state or the USD
-  probe_grip.py             measures which finger action sign closes the hand,
-                            and how far it actually travels
-  probe_reward.py           validates each reward term at scripted states
-  export_usd.py             URDF -> flat USD (needs the 2.3.2 image; history)
-  probe_urdf_30.py          shows why 3.0 cannot import this URDF directly
-  make_wuji_urdf.py         vendors the Wuji-hand body from adam-moveit as a
-                            standalone URDF + meshes  (Wuji variant, below)
-  make_wuji_hand_urdf.py    cuts the right hand out as its own robot (Experiment 2)
-  find_pinch_pose.py        host-side: solves the pinch pre-grasp pose and the
-                            hand orientation from the URDF kinematics
-  probe_synergy.py          Experiment 2 scene check, scripted-close pose and
-                            closure sweeps, fingertip traces
-  eval_synergy.py           Experiment 2 per-episode metrics and videos
-  export_usd_wuji.py        that URDF -> flat USD, in the 2.3.2 image
-  eval_grasponly.py         per-episode success rates for a grasp-only
-                            checkpoint (lifted / held / dropped / off table)
-  probe_wuji.py             spawn heights, grip sign, bolt rest height and
-                            every reward term for the Wuji envs; --scenario
-                            grasp adds a scripted close-and-lift sweep  <- run
-                            after any change to them
-  solve_pregrasp_pose.py    host-side URDF IK: arm (+ waist) angles that park
-                            the hand over the bolt
-  hand_geometry.py          host-side URDF FK: where the Wuji fingertips are
-                            for a given finger posture
-adam_u_isaac_lab/
-  adam_u_rl/
-    envs/adam_u_grasp_env_cfg.py    scene, actions, observations, rewards (PND hand, cube)
-    envs/adam_u_wuji_grasp_env_cfg.py   Wuji Hand 2 + adam-moveit's workcell (bolt), reach + grasp
-    envs/adam_u_wuji_grasponly_env_cfg.py   same, hand starts over the bolt: grasp only
-    envs/wuji_synergy_grasp_env_cfg.py      Experiment 2: hand only, fixed wrist, 2 synergies
-    envs/utils/observations.py      end-effector pose observation terms
-    algos/rsl_rl/rsl_rl_ppo_cfg.py  PPO hyperparameters (rsl-rl 5.x schema)
-    scripts/train.py, play.py       entry points
+tools/                      diagnostics and asset builders, mounted at /opt/tools
+adam_u_isaac_lab/           the installable package (pyproject.toml); container /workspace
+  genesis_rl/
+    tasks/                  one folder per training task, registered in tasks/__init__.py
+      pnd_grasp/            Inspire hands, cube            --task pnd_grasp
+      wuji_reach/           Wuji hand, arm must reach      --task wuji_reach
+      wuji_grasp/           hand starts over the bolt      --task wuji_grasp
+      wuji_synergy/         hand only, two synergies       --task wuji_synergy
+      wuji_pipeline/        IK wrist + synergies           --task wuji_pipeline
+      wuji_reach_grasp/     standoff approach + lift       --task wuji_reach_grasp
+      wuji_teleop/          20-DoF glove env, not registered (no runner config yet)
+    mdp/observations.py     shared end-effector observation terms
+    algos/rsl_rl/           PPO runner configs and MaskedPPO
+    scripts/train.py, play.py   --task, or the older --robot/--scenario flags
+    envs/                   old import paths; they re-export the task modules
+    paths.py                checkout root, assets/, logs/ — not derived from file depth
   assets/robots/adam_u/
     urdf/, meshes/          URDF + 33 DAE + 14 STL (meshes sanitized)
     usd/                    committed flat USD -- what actually gets spawned
@@ -116,6 +96,14 @@ adam_u_isaac_lab/
 The repo is standalone: nothing outside it is needed to build or run.
 `git log -p` is the record of every change and why.
 
+`genesis_rl` is the reusable piece. A new training run is a folder under
+`genesis_rl/tasks/` and one entry in `genesis_rl/tasks/__init__.py` (gym id,
+environment class, PPO config, experiment directory). `train.py` and `play.py`
+look the task up; they do not grow a new branch. The old
+`from genesis_rl.envs.<file> import ...` paths still work, so the tools under
+`tools/` did not have to move. Robot meshes and USD stay in `assets/`: they
+are data, and the container already expects them at `/workspace/assets`.
+
 ## Quick start
 
 ```bash
@@ -131,16 +119,16 @@ Then, inside:
 
 ```bash
 # 30 s sanity check
-python adam_u_rl/scripts/train.py --num_envs 16 --max_iterations 3
+python genesis_rl/scripts/train.py --num_envs 16 --max_iterations 3
 
 # real run, headless
-python adam_u_rl/scripts/train.py --num_envs 4096
+python genesis_rl/scripts/train.py --num_envs 4096
 
 # train with the RTX viewport open
-python adam_u_rl/scripts/train.py --viz kit --num_envs 16
+python genesis_rl/scripts/train.py --viz kit --num_envs 16
 
 # watch a trained policy
-python adam_u_rl/scripts/play.py --viz kit --num_envs 4 --real-time \
+python genesis_rl/scripts/play.py --viz kit --num_envs 4 --real-time \
     --checkpoint_path logs/rsl_rl/adam_u30_grasp/<run>/model_1499.pt
 
 # confirm the robot spawns upright
@@ -150,7 +138,7 @@ python /opt/tools/compare_pose.py
 Or one-shot, without leaving a container behind:
 
 ```bash
-docker compose run --rm adam_rl python adam_u_rl/scripts/train.py --num_envs 4096
+docker compose run --rm adam_rl python genesis_rl/scripts/train.py --num_envs 4096
 ```
 
 Checkpoints land on the host in
@@ -343,9 +331,9 @@ second robot lives here beside the first:
 | experiment dir | `logs/rsl_rl/adam_u30_grasp` | `logs/rsl_rl/adam_u30_wuji_grasp` |
 
 ```bash
-python adam_u_rl/scripts/train.py --robot wuji --num_envs 4096          # bolt on the bare table
-ADAM_U_WORKCELL=bin python adam_u_rl/scripts/train.py --robot wuji --num_envs 4096   # bolt inside the bin
-python adam_u_rl/scripts/play.py --robot wuji --viz kit --num_envs 4 --real-time \
+python genesis_rl/scripts/train.py --robot wuji --num_envs 4096          # bolt on the bare table
+ADAM_U_WORKCELL=bin python genesis_rl/scripts/train.py --robot wuji --num_envs 4096   # bolt inside the bin
+python genesis_rl/scripts/play.py --robot wuji --viz kit --num_envs 4 --real-time \
     --checkpoint_path logs/rsl_rl/adam_u30_wuji_grasp/<run>/model_N.pt
 python /opt/tools/probe_wuji.py                                          # measure before you trust it
 ```
@@ -449,8 +437,8 @@ reach env and changes only the start pose, the bolt spot, the actions, the
 rewards and the episode length (5 s). PPO is unchanged (`rsl_rl_ppo_cfg.py`).
 
 ```bash
-python adam_u_rl/scripts/train.py --robot wuji --scenario grasp --num_envs 4096
-python adam_u_rl/scripts/play.py  --robot wuji --scenario grasp --viz kit --num_envs 4 --real-time \
+python genesis_rl/scripts/train.py --robot wuji --scenario grasp --num_envs 4096
+python genesis_rl/scripts/play.py  --robot wuji --scenario grasp --viz kit --num_envs 4 --real-time \
     --checkpoint_path logs/rsl_rl/adam_u30_wuji_grasponly/<run>/model_N.pt
 python /opt/tools/probe_wuji.py --scenario grasp
 ```
@@ -497,7 +485,7 @@ policy learned the grasp. Per-episode evaluation over 512 episodes
 (`tools/eval_grasponly.py`): the bolt is lifted in 100 %, still held when the
 5 s episode ends in 99.4 %, held for the whole last second in 95.5 %; dropped
 0.6 %, knocked off 0.2 %; mean peak lift 8.4 cm. The breakthrough came between
-iterations 300 and 400. Full curve and settings in `TRAINING_LOG.md`.
+iterations 300 and 400. Full curve and settings in `docs/TRAINING_LOG.md`.
 
 ### Experiment 2: finger-only synergy grasp (`--robot wuji --scenario synergy`)
 
@@ -506,10 +494,10 @@ observations, a scripted 10 cm lift and a held-for-1-s success. Built as
 `wuji_synergy_grasp_env_cfg.py` on a **hand-only articulation**
 (`assets/robots/wuji_hand_right/`, cut out of the full URDF by
 `tools/make_wuji_hand_urdf.py`; a prismatic `wrist_lift` root joint is the
-scripted lift). Full design, measurements and results in `TRAINING_LOG.md`.
+scripted lift). Full design, measurements and results in `docs/TRAINING_LOG.md`.
 
 ```bash
-python adam_u_rl/scripts/train.py --robot wuji --scenario synergy --num_envs 1024 --max_iterations 500
+python genesis_rl/scripts/train.py --robot wuji --scenario synergy --num_envs 1024 --max_iterations 500
 python /opt/tools/eval_synergy.py --checkpoint_path logs/rsl_rl/adam_u30_wuji_synergy/<run>/model_499.pt
 # the same, but with the Isaac Lab window open and slowed down so you can watch
 python /opt/tools/eval_synergy.py --viz kit --num_envs 16 --episodes 16 \
@@ -553,7 +541,7 @@ two-finger grasp does exist, but at one closure combination out of sixteen
 against four for three fingers, and PPO never lands in it — the contact
 bonuses are collected in full by exploration noise while the policy's mean
 stays fully open, so they carry no gradient, and +20 for success is never
-reached by chance. Details and the three ways out are in `TRAINING_LOG.md`.
+reached by chance. Details and the three ways out are in `docs/TRAINING_LOG.md`.
 
 ### Not yet done for the Wuji variant
 

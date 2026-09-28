@@ -7,7 +7,7 @@ into a grasp. It covers **Experiment 2**, the finger-only synergy grasp
 method; the last section says how the other two scenarios differ.
 
 For the environment, the robot assets and the measured results, see
-[`../README.md`](../README.md) and [`../TRAINING_LOG.md`](../TRAINING_LOG.md).
+[`../README.md`](../README.md) and [`TRAINING_LOG.md`](TRAINING_LOG.md).
 
 ---
 
@@ -69,7 +69,7 @@ Two separate multilayer perceptrons, both 128 → 128 with ELU activations:
 Both normalise their inputs with a running mean and variance, which matters
 because the observation mixes radians, radians per second and newtons.
 
-Configured in `adam_u_rl/algos/rsl_rl/rsl_rl_ppo_cfg.py`
+Configured in `genesis_rl/algos/rsl_rl/rsl_rl_ppo_cfg.py`
 (`RslRlWujiSynergyPPORunnerCfg`).
 
 ---
@@ -347,7 +347,7 @@ The full set, including asset rebuilds and diagnostics, is in
 docker compose up -d && docker compose exec adam_rl bash
 
 # train (ADAM_U_FINGERS picks 2, 3 or 4 fingers; 3 is the default)
-python adam_u_rl/scripts/train.py --robot wuji --scenario synergy \
+python genesis_rl/scripts/train.py --robot wuji --scenario synergy \
     --num_envs 1024 --max_iterations 500
 
 # evaluate: success, drop, collision, force, contact fractions, final synergies
@@ -364,7 +364,7 @@ python /opt/tools/eval_synergy.py --checkpoint_path <ckpt> \
     --num_envs 4 --episodes 8 --video
 
 # watch it, slowed down, with a pause so the window is up before the close
-python adam_u_rl/scripts/play.py --robot wuji --scenario synergy --viz kit \
+python genesis_rl/scripts/play.py --robot wuji --scenario synergy --viz kit \
     --num_envs 4 --real-time --speed 0.25 --start-delay 25 --checkpoint_path <ckpt>
 
 # scripted baseline and diagnostics, no policy involved
@@ -390,11 +390,11 @@ axis, so it needs a URDF and USD rebuild. The environment asserts the two agree.
 
 | piece | file |
 |---|---|
-| scene, observations, reward, success, state machine | `adam_u_rl/envs/wuji_synergy_grasp_env_cfg.py` |
+| scene, observations, reward, success, state machine | `genesis_rl/envs/wuji_synergy_grasp_env_cfg.py` |
 | synergy action term and the scripted lift | same file, `SynergyGraspAction` |
-| PPO hyperparameters | `adam_u_rl/algos/rsl_rl/rsl_rl_ppo_cfg.py` |
-| training entry point | `adam_u_rl/scripts/train.py` |
-| playback | `adam_u_rl/scripts/play.py` |
+| PPO hyperparameters | `genesis_rl/algos/rsl_rl/rsl_rl_ppo_cfg.py` |
+| training entry point | `genesis_rl/scripts/train.py` |
+| playback | `genesis_rl/scripts/play.py` |
 | per-episode evaluation and videos | `tools/eval_synergy.py` |
 | scene checks and scripted sweeps | `tools/probe_synergy.py` |
 | pre-grasp pose solver | `tools/find_pinch_pose.py` |

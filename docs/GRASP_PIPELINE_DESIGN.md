@@ -1,7 +1,7 @@
 # Staged grasp pipeline — design
 
 **Status: partly superseded by what was measured. Read this with
-[`TRAINING_LOG.md`](../TRAINING_LOG.md), which records the runs and the three
+[`TRAINING_LOG.md`](TRAINING_LOG.md), which records the runs and the three
 things this document got wrong.**
 
 Still correct: one environment, one fixed interface, the whole robot, Cartesian

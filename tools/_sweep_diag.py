@@ -7,10 +7,10 @@ import torch, importlib.metadata as md
 import gymnasium as gym
 from rsl_rl.runners import OnPolicyRunner
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
-from adam_u_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlWujiPipelinePPORunnerCfg
-from adam_u_rl.envs import wuji_pipeline_env_cfg as P
-from adam_u_rl.envs import wuji_synergy_grasp_env_cfg as C
-from adam_u_rl.envs.adam_u_wuji_grasp_env_cfg import _t
+from genesis_rl.algos.rsl_rl.rsl_rl_ppo_cfg import RslRlWujiPipelinePPORunnerCfg
+from genesis_rl.envs import wuji_pipeline_env_cfg as P
+from genesis_rl.envs import wuji_synergy_grasp_env_cfg as C
+from genesis_rl.envs.adam_u_wuji_grasp_env_cfg import _t
 
 cfg = P.WujiPipelineEnvCfg(); cfg.scene.num_envs = 128; cfg.sim.device = "cuda:0"
 gym.register(id="SweepDiag", entry_point="isaaclab.envs:ManagerBasedRLEnv",

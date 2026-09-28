@@ -30,7 +30,7 @@ app = AppLauncher(headless=True).app
 import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
 
-from adam_u_rl.envs.adam_u_grasp_env_cfg import AdamUGraspEnvCfg
+from genesis_rl.envs.adam_u_grasp_env_cfg import AdamUGraspEnvCfg
 
 cfg = AdamUGraspEnvCfg()
 cfg.scene.num_envs = 2

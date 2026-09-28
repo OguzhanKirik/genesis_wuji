@@ -1,4 +1,4 @@
-# adam_u_rl
+# genesis_rl
 
 ## Overview
 
@@ -33,7 +33,7 @@ Tested on:
 Clone this repo:
 ```bash
 git clone https://gitlab.com/pndbotics/manipulation.git
-cd adam_u_rl
+cd genesis_rl
 ```
 
 ---
@@ -45,7 +45,7 @@ cd adam_u_rl
 Navigate to the `manipulation` folder and run:
 
 ```bash
-python adam_u_rl/scripts/train.py --headless
+python genesis_rl/scripts/train.py --headless
 ```
 
 ### Evaluate
@@ -53,7 +53,7 @@ python adam_u_rl/scripts/train.py --headless
 To evaluate a trained policy:
 
 ```bash
-python adam_u_rl/scripts/play.py   --checkpoint_path logs/rsl_rl/adam_u_grasp/2025-06-27_17-04-25/model_1499.pt
+python genesis_rl/scripts/play.py   --checkpoint_path logs/rsl_rl/adam_u_grasp/2025-06-27_17-04-25/model_1499.pt
 ```
 
 ---
