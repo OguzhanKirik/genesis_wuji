@@ -887,11 +887,14 @@ LEVELS[52] = dataclasses.replace(LEVELS[51], name="bin_highest",
                                  fill=FillCfg(prob=0.85, pick="highest", files=(("bin_heaps_full.npz", 0.4),
                                                                                 ("bin_heaps_sparse.npz", 0.35),
                                                                                 ("bin_heaps_empty.npz", 0.25))))
-# Evaluation only: level 52 with 4 cm walls (the virtual bin's height, levels 25-49). Does the 8 cm wall cost the
-# floor rods? The level-52 pick scores 28-35 % on half-full and near-empty bins, against 83 % for the level-44 pick
-# on single rods in the 4 cm bin.
+# Level 52 with 4 cm walls (the virtual bin's height, levels 25-49). The level-52 pick untrained here: 57.5 % against
+# 39.1 % with 8 cm walls (near-empty bins 65.0 / 34.6 %): the tall wall forces a steep approach that costs the grip
+# (latched 73 / 41 %). Trained 2026-10-17 from the level-52 pick, logs/chains/chain_L53.sh.
 LEVELS[53] = dataclasses.replace(LEVELS[52], name="bin_highest_low_walls",
                                  bin=dataclasses.replace(LEVELS[52].bin, height=0.04))
+# Level 52's scene (8 cm walls) under its own number, for training with the stall fix (--entropy-coef 0 --reset-std
+# 0.2 --lr 2e-4 fixed: level 52's run went flat from iteration ~100 while the entropy rose 1.7 -> 3.0).
+LEVELS[54] = dataclasses.replace(LEVELS[52], name="bin_highest_ft")
 LEVEL = int(os.environ.get("ADAM_U_RG_LEVEL", "0"))
 if LEVEL not in LEVELS:
     raise ValueError(f"ADAM_U_RG_LEVEL must be one of {sorted(LEVELS)}, got {LEVEL}")

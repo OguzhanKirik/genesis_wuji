@@ -2294,6 +2294,27 @@ Against the earlier, non-binding maps (99 % nearly everywhere): the rod
 is graspable at every point along it, but the ends have a real cost that
 those maps hid because the fingers went to the band regardless.
 
+## Level 52 — perception's choice of rod, bins at three fill levels; the wall height (2026-10-16)
+
+The target is the highest exposed reachable rod (FillCfg.pick "highest", a standing rod scored 15 mm lower), the
+rule `genesis_policy/selector.py` applies on the robot (parity on 1024 heaps, `tools/dump_fill_choices.py`), in bins
+of 40-60 / 15-25 / 5-10 rods (weights .4 / .35 / .25; `bin_heaps_empty.npz` new). 1000 iterations from the level-51
+pick, `logs/chains/chain_L52.sh`. Pickability probe, 3072 heap episodes each (`logs/pickable_L52_*.npz`):
+
+| bin | level-51 pick, the rule | level-52 pick `model_20900` | level-52 pick, 4 cm walls (level 53, untrained) |
+|---|---|---|---|
+| 5-10 rods | 25.1 % | 34.6 % | **65.0 %** |
+| 15-25 rods | 23.8 % | 27.7 % | **50.6 %** |
+| 40-60 rods | 54.0 % | 50.7 % | **60.0 %** |
+| all | 36.6 % | 39.1 % | **57.5 %** |
+
+Training went flat from iteration ~100 while the entropy rose 1.7 -> 3.0 (std 0.30 -> 0.35). The rule alone is
+worth +6.5 points on full bins, not the +20 the report's "≥ 35 mm" rows suggest: the highest rod is not always that
+high. As the bin empties the target is a single rod on the floor at ~12 mm, which the level-44 pick took 83 % of the
+time in the 4 cm bin; the same policy with 4 cm walls instead of 8 lifts every fill level, most where rods are on the
+floor (latched 41 -> 73 %, wall hits 13 -> 0 % on near-empty bins): the tall wall forces a steep approach that costs
+the grip. Levels 53 (4 cm walls) and 54 (8 cm, the stall fix) train next, `logs/chains/chain_L53.sh`.
+
 ## Levels 50 and 51 — the full bin (2026-10-15/16, night)
 
 adam-moveit's bin (workcell.json: inner 22 x 16 cm, walls 8 cm, centred on BOLT_XY here, on the right hand's side)
