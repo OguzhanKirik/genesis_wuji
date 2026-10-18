@@ -35,6 +35,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--num_envs", type=int, default=64)
 parser.add_argument("--episodes", type=int, default=128)
 parser.add_argument("--skip", nargs="*", default=[], help="policies to skip, e.g. --skip random unsafe")
+parser.add_argument("--bolt-mass", type=float, default=None, help="override the bolt's mass (kg)")
+parser.add_argument("--finger-scale", type=float, default=None,
+                    help="scale the driven fingers' stiffness, damping and effort limits (what-if for a stronger hand)")
 args, _ = parser.parse_known_args()
 sys.argv = [sys.argv[0]]
 
@@ -50,6 +53,15 @@ from genesis_rl.envs.wuji_pipeline_env_cfg import _metrics  # noqa: E402
 cfg = G.WujiReachGraspEnvCfg()
 cfg.scene.num_envs = args.num_envs
 cfg.sim.device = "cuda:0"
+if args.bolt_mass is not None:
+    cfg.scene.object.spawn.mass_props.mass = args.bolt_mass
+    print(f"MASS OVERRIDE: bolt {args.bolt_mass:g} kg")
+if args.finger_scale is not None:
+    act = cfg.scene.robot.actuators["right_driven_fingers"]
+    act.stiffness = act.stiffness * args.finger_scale
+    act.damping = act.damping * args.finger_scale
+    act.effort_limit = {k: v * args.finger_scale for k, v in act.effort_limit.items()}
+    print(f"FINGER OVERRIDE: driven-finger stiffness / damping / effort x{args.finger_scale:g}")
 env = G.ReachGraspEnv(cfg=cfg)
 lvl = G.LEVELS[cfg.actions.pipeline.level]
 n, dev = env.num_envs, env.device
@@ -122,7 +134,7 @@ def run(name, fn, episodes):
     acc = torch.zeros(len(TERMS), device=dev)
     ret = 0.0
     done_count = 0
-    out = dict(success=0, held=0, invalid=0, inv_table=0, inv_struct=0, inv_bolt=0, excess=0, drop=0,
+    out = dict(success=0, held=0, invalid=0, inv_table=0, inv_struct=0, inv_bolt=0, inv_obs=0, excess=0, drop=0,
                latched=0, drag_sum=0.0, drag_max=0.0, slack_worst=1.0, clear=torch.ones(len(G.GROUP_NAMES), device=dev),
                grasp_end=0.0)
     env.reset()
@@ -132,16 +144,19 @@ def run(name, fn, episodes):
     # per-env accumulators over the CURRENT episode
     ep_acc = torch.zeros(n, len(TERMS), device=dev)
     ep_ret = torch.zeros(n, device=dev)
-    while done_count < episodes:
+    quota = max(1, math.ceil(episodes / n))           # every env contributes exactly quota episodes (no length bias)
+    ep_count = torch.zeros(n, dtype=torch.long, device=dev)
+    while bool((ep_count < quota).any()):
         _, rew, term, trunc, _ = env.step(fn(t))
         t += 1
         ep_acc += env.reward_manager._step_reward
         ep_ret += rew
         m = _metrics(env)
         out["slack_worst"] = min(out["slack_worst"], float(m["s_min"].min()))
-        done = (term | trunc)
+        done = (term | trunc) & (ep_count < quota)
         if done.any():
             ids = done.nonzero(as_tuple=False).squeeze(-1)
+            ep_count[ids] += 1
             b = G._rg(env)
             k = len(ids)
             done_count += k
@@ -157,6 +172,7 @@ def run(name, fn, episodes):
             out["inv_table"] += int((inv & (w == 1)).sum())
             out["inv_struct"] += int((inv & (w == 2)).sum())
             out["inv_bolt"] += int((inv & (w == 3)).sum())
+            out["inv_obs"] += int((inv & (w == 4)).sum())
             out["excess"] += int(b["last_excess"][ids].sum())
             out["drop"] += int(b["last_drop"][ids].sum())
             out["latched"] += int(b["last_latched"][ids].sum())
@@ -195,7 +211,7 @@ for k in TERMS:
 print(f"  {'TOTAL RETURN':{w}s}" + "".join(f"{r['ret']:12.3f}" for r in rows))
 for key, label, pct in (("success", "success rate", True), ("held", "held rate", True), ("latched", "latched", True),
                         ("invalid", "invalid collision", True), ("inv_table", "  finger-table", True),
-                        ("inv_struct", "  structural-table", True), ("inv_bolt", "  non-grasp link on bolt", True),
+                        ("inv_struct", "  structural-table", True), ("inv_bolt", "  non-grasp link on bolt/obstacle", True), ("inv_obs", "  obstacle", True),
                         ("excess", "excess force", True), ("drop", "drop", True)):
     print(f"  {label:{w}s}" + "".join(f"{r[key] / r['E'] * 100:11.1f}%" for r in rows))
 print(f"  {'grasp end (mean step)':{w}s}" + "".join(f"{r['grasp_end'] / r['E']:12.1f}" for r in rows))

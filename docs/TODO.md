@@ -214,6 +214,7 @@ Each of these cost real time and is documented where it bites.
   to adam-moveit's `right_hand_controller`, so a policy trained here emits
   commands in the layout the real Wuji driver expects. What is missing is the
   bridge in the other direction and any treatment of the sim-to-real gap.
+  The plan for both is `SIM_TO_REAL.md` (2026-10-08).
 - **adam-moveit's Wuji path is scaffolding.** The plugin, joint map, controllers
   and SRDF exist, but its own design note says nothing downstream knows these
   hands and the command path is unbuilt. If a trained policy is ever to drive

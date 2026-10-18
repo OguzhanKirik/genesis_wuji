@@ -236,7 +236,7 @@ FINGER_JOINTS = ["r_index_finger_mcp_flex", "r_index_finger_pip", "r_index_finge
 SYNERGY_JOINTS = THUMB_JOINTS + FINGER_JOINTS            # 9 driven
 THUMB_ABD = -0.85                                        # thumb opposition, held
 OPEN_CURL, CLOSED_CURL = 0.40, 0.60                      # fractions of each flexion limit
-HELD_CURL = 0.0                                          # ring/little FLAT: curling them in this
+HELD_CURL = float(os.environ.get("ADAM_U_HELD_CURL", "0.0"))   # ring/little FLAT (0) .. fist (1); ADAM_U_HELD_CURL for A/B. Curling them in this
                                                          # tilted pose brings their tips DOWN onto
                                                          # the table, which Experiment 2 measured
 _LIMIT = {"r_thumb_cmc_flex": 1.291, "r_thumb_mcp": 1.570, "r_thumb_ip": 1.570,

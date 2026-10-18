@@ -267,7 +267,7 @@ refuses to start if they disagree.
 
 Design: [`EXPERIMENT4_DESIGN.md`](EXPERIMENT4_DESIGN.md). The level is
 `ADAM_U_RG_LEVEL` (0 gate, 1-4 standoff and pose error, 5 physics, 6-7
-perception, 8 clutter), and it MUST be passed with `docker compose exec -e`.
+perception, 8-10 clutter, 11-13 bolt pose), and it MUST be passed with `docker compose exec -e`.
 
 ```bash
 # HOST: arm poses and reset Jacobians for the standoff buckets (paste block)
@@ -292,6 +292,21 @@ docker compose exec -e ADAM_U_RG_LEVEL=2 adam_rl python genesis_rl/scripts/train
 docker compose exec -e ADAM_U_RG_LEVEL=1 adam_rl python /opt/tools/eval_reach_grasp.py \
     --checkpoint_path logs/rsl_rl/adam_u30_wuji_reach_grasp_L1/<run>/model_<best>.pt --num_envs 256 --episodes 512
 
+# level 14+: the waist buckets (once, on the host; ~5 min on 48 cores)
+python3 tools/solve_reach_grasp_poses.py --grid --free-waist --min-slack 0.15
+# level 21+: the same grid with the wrist rolled to the three block tilts (~20 min)
+python3 tools/solve_reach_grasp_poses.py --grid --free-waist --min-slack 0.15 --tilts-deg 0 18.4 29.5 39.8
+
+# level 15: graspable-area sweep along the rod's axis (17 offsets x 512 episodes, ~25 min)
+tools/sweep_grasp_offset.sh 15 logs/rsl_rl/adam_u30_wuji_reach_grasp_L15/<run>/model_<best>.pt 512
+# level 16: offset x pinch-angle map (PINCH pins the angle; OUT=<dir> resumes a sweep)
+for a in -45 -30 -15 0 15 30 45; do PINCH=$a tools/sweep_grasp_offset.sh 16 <checkpoint> 512 -12 -8 -4 0 4 8 12; done
+# level 18: the standing rod's height map (UPRIGHT=1), and the lying map again on the new collider (UPRIGHT=0)
+UPRIGHT=1 tools/sweep_grasp_offset.sh 18 <checkpoint> 512 -14 -10 -6 -2 2 6 10 14
+# one offset only
+docker compose exec -e ADAM_U_RG_LEVEL=15 adam_rl python /opt/tools/eval_reach_grasp.py \
+    --checkpoint_path logs/rsl_rl/adam_u30_wuji_reach_grasp_L15/<run>/model_<best>.pt --grasp-offset-mm 12
+
 # watch it
 docker compose exec -e ADAM_U_RG_LEVEL=1 adam_rl python genesis_rl/scripts/play.py --robot wuji \
     --scenario reach_grasp --viz kit --num_envs 4 --real-time --speed 0.25 --start-delay 15 \
@@ -310,7 +325,7 @@ them after Isaac Lab's reset, which is why the pipeline's never appeared.
 |---|---|---|
 | `ADAM_U_FINGERS` | `2`, `3` (default), `4` | how many fingers oppose the thumb in Experiment 2 |
 | `ADAM_U_LEVEL` | `0`..`3` | displacement level of the staged pipeline |
-| `ADAM_U_RG_LEVEL` | `0`..`8` | curriculum level of Experiment 4 (`--scenario reach_grasp`) |
+| `ADAM_U_RG_LEVEL` | `0`..`35` | curriculum level of Experiment 4 (`--task wuji_reach_grasp`) |
 | `ADAM_U_WORKCELL` | `single` (default), `bin` | bare table, or adam-moveit's bin, for Experiments 1 and the reach scenario |
 | `WORKCELL_SIDE` | `right` (default), `left` | mirror the workcell for the training arm |
 | `ADAM_U_ASSETS` | path | override the asset root |

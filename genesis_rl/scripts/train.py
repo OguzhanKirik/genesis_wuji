@@ -56,6 +56,11 @@ parser.add_argument("--reset-std", type=float, default=None, metavar="STD",
                          "value forward, so it ratchets up the ladder (0.98 -> 1.15 -> 2.25 over "
                          "levels 0-2) until the noise is larger than the displacement being "
                          "corrected.")
+parser.add_argument("--entropy-coef", type=float, default=None,
+                    help="Override the PPO entropy bonus (fine-tuning: 0 stops the std from inflating).")
+parser.add_argument("--lr", type=float, default=None, help="Override the PPO learning rate.")
+parser.add_argument("--lr-schedule", choices=["fixed", "adaptive"], default=None,
+                    help="Override the PPO learning-rate schedule (adaptive: KL-targeted, desired_kl).")
 parser.add_argument("--task", default=None,
                     help="Task short name or gym id. Overrides --robot/--scenario. "
                          + known_names())
@@ -117,6 +122,15 @@ def main() -> int:
     # kwargs and rsl-rl 5.0.1 dies with
     #   TypeError: MLPModel.__init__() got an unexpected keyword argument 'stochastic'
     # Isaac Lab 3.0's own train script calls this; a hand-written one must too.
+    if args_cli.entropy_coef is not None:
+        agent_cfg.algorithm.entropy_coef = args_cli.entropy_coef
+        print(f"[train30] entropy_coef = {args_cli.entropy_coef}")
+    if args_cli.lr is not None:
+        agent_cfg.algorithm.learning_rate = args_cli.lr
+        print(f"[train30] learning_rate = {args_cli.lr}")
+    if args_cli.lr_schedule is not None:
+        agent_cfg.algorithm.schedule = args_cli.lr_schedule
+        print(f"[train30] schedule = {args_cli.lr_schedule}")
     agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, metadata.version("rsl-rl-lib"))
 
     gym.register(

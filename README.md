@@ -9,6 +9,8 @@ A task is one Isaac Lab environment, one PPO config, and one log directory.
 new training script.
 
 Past runs, reward equations, and the long command list are in
+[`docs/EXPERIMENT4_STEPS.md`](docs/EXPERIMENT4_STEPS.md) (Experiment 4 step by step),
+[`docs/GRASP_AREA_REPORT.md`](docs/GRASP_AREA_REPORT.md) (the graspable-area study, levels 15–17) and
 [`docs/`](docs/EXPERIMENTS_SUMMARY.md). This page is how to train and how to
 watch a policy.
 

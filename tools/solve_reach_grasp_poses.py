@@ -68,13 +68,15 @@ PIPELINE_J_SHARP = np.array([
 ])
 
 
-def jacobian(arm, q_arm, eps=1e-6):
+def jacobian(arm, q_arm, eps=1e-6, held=(WAIST_HELD,)):
     """(6, 7) world-frame geometric Jacobian of the wrist body, by central differences.
 
     Rows 0-2: position. Rows 3-5: rotation as a small world-frame rotation
     vector, i.e. the same convention the env's IK uses (axis-angle error
-    applied in the world frame)."""
-    x0 = np.append(q_arm, WAIST_HELD)
+    applied in the world frame). `held` are the values of the arm's extra
+    (pinned) variables after the 7 arm joints: the waist pitch, and the waist
+    yaw when it is part of the chain."""
+    x0 = np.append(q_arm, held)
     T0 = arm.fk(x0)
     R0 = R.from_matrix(T0[:3, :3])
     J = np.zeros((6, 7))
@@ -95,6 +97,254 @@ def damped_pinv(J, lam):
     return J.T @ np.linalg.inv(J @ J.T + (lam ** 2) * np.eye(6))
 
 
+# The bolt sits at a fixed offset from the wrist in the HAND's frame, so it
+# yaws with the hand (solve_pipeline_pregrasp.bolt_xy). Bolt xy - wrist xy at
+# the pipeline's yaw:
+BOLT_OFFSET_XY = np.array([0.5474 - WRIST_XY[0], -0.1099 - WRIST_XY[1]])
+
+
+# The waist, when freed: its three joints (chain: waistRoll, waistPitch,
+# waistYaw, torso) are held at ONE triple per (bolt yaw, xy) column for the
+# whole episode, chosen from this scan by the best worst-height arm slack,
+# nearest-to-nominal first so a column the nominal hold serves keeps it.
+# Joint limits: pitch -0.663..1.361, yaw +/-0.829, roll +/-0.279 rad.
+WAIST_NOMINAL = (WAIST_HELD, 0.0, 0.0)                      # (pitch, yaw, roll)
+WAIST_JOINTS = ("waistPitch", "waistYaw", "waistRoll")
+WAIST_PITCH_SCAN = (1.05, 0.9, 1.2)
+WAIST_YAW_SCAN = (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75)
+WAIST_ROLL_SCAN = (0.0, 0.2, -0.2)
+WAIST_GOOD = 0.25              # stop scanning once the column's worst slack reaches this
+
+
+def waist_scan():
+    combos = [(p, y, r) for p in WAIST_PITCH_SCAN for y in WAIST_YAW_SCAN for r in WAIST_ROLL_SCAN]
+    key = lambda c: abs(c[0] - WAIST_HELD) / 0.15 + abs(c[1]) / 0.25 + abs(c[2]) / 0.2  # noqa: E731
+    return sorted(combos, key=key)
+
+
+# Arm-link proxy spheres (body, offset in the body frame, radius) and the table
+# box, for the solver's own clearance check: a hold that drops the elbow or
+# upper arm into the table is not a reachable bucket, whatever its slack.
+# KEEP IN SYNC with PROXY_GROUPS["forearm"], ["upperarm"] and the table in
+# genesis_rl/tasks/wuji_reach_grasp/env_cfg.py; tools/test_reach_grasp.py
+# checks that they match.
+ARM_PROXIES = (
+    ("elbowRight", (-0.013, -0.029, -0.031), 0.045),
+    ("wristYawRight", (0.0, 0.0, -0.020), 0.048),
+    ("wristYawRight", (0.0, 0.0, -0.095), 0.048),
+    ("wristYawRight", (0.0, 0.0, -0.170), 0.048),
+    ("shoulderYawRight", (0.001, -0.003, -0.020), 0.050),
+    ("shoulderYawRight", (0.001, -0.003, -0.120), 0.050),
+    ("shoulderYawRight", (0.001, -0.003, -0.220), 0.050),
+    ("shoulderRollRight", (-0.033, -0.017, -0.010), 0.065),
+)
+TABLE_LO = (0.30, -0.40, 0.0)          # assets/workcell/workcell_single.json
+TABLE_HI = (0.80, 0.40, 0.95)
+# The least arm-link clearance a bucket may have. The standoff buckets (5 and
+# 10 cm) are where episodes START, plus up to 2 cm of sampled reset error, so
+# they need more; the contact bucket only has to exist for the descent.
+ARM_CLEAR_MIN_CONTACT = 0.01           # m, h < 2.5 cm
+ARM_CLEAR_MIN_STANDOFF = 0.025         # m, h >= 2.5 cm
+
+
+def arm_clear_min(h: float) -> float:
+    return ARM_CLEAR_MIN_CONTACT if h < 0.025 else ARM_CLEAR_MIN_STANDOFF
+
+
+def arm_clearance(arm, x) -> float:
+    """Least clearance of the forearm / upper-arm proxy spheres to the table box, metres (negative = inside)."""
+    lo, hi = np.array(TABLE_LO), np.array(TABLE_HI)
+    q = dict(zip(arm.vars, x))
+    worst = np.inf
+    for body, off, r in ARM_PROXIES:
+        sub = arm.path[:next(i for i, (n, j) in enumerate(arm.path) if j["child"] == body) + 1]
+        T = arm.m.fk(sub, q)
+        c = T[:3, 3] + T[:3, :3] @ np.array(off)
+        d = np.maximum(np.maximum(lo - c, 0.0), c - hi)
+        if (d > 0).any():
+            clear = np.linalg.norm(d) - r
+        else:
+            clear = -(np.minimum(c - lo, hi - c).min() + r)
+        worst = min(worst, clear)
+    return float(worst)
+
+
+def _make_arm(free_waist: bool):
+    """The arm chain with waistPitch pinned; with the waist freed, all three
+    waist joints are variables (pinned per scan value by the caller)."""
+    arm = pp.Arm(pp._load_solver(), waist_max=1.36)
+    arm.lo[-1], arm.hi[-1] = WAIST_HELD - 1e-6, WAIST_HELD + 1e-6
+    if free_waist:
+        arm.vars = ARM + list(WAIST_JOINTS)
+        arm.lo = np.concatenate([arm.lo[:7], [WAIST_HELD - 1e-6, -1e-6, -1e-6]])
+        arm.hi = np.concatenate([arm.hi[:7], [WAIST_HELD + 1e-6, 1e-6, 1e-6]])
+        arm.ready = np.concatenate([arm.ready[:7], WAIST_NOMINAL])
+    return arm
+
+
+def _pin_waist(arm, w):
+    arm.lo[7:] = np.array(w) - 1e-6
+    arm.hi[7:] = np.array(w) + 1e-6
+    arm.ready[7:] = w
+
+
+def _solve_pose(arm, pos, rot, seed_q, held, seeds):
+    """One wrist pose: least squares from the warm start, the multi-seed solve as a fallback."""
+    from scipy.optimize import least_squares
+    x0 = np.append(seed_q, held)
+
+    def resid(x):
+        T = arm.fk(x)
+        ori = (rot.inv() * R.from_matrix(T[:3, :3])).as_rotvec()
+        return np.concatenate([T[:3, 3] - pos, ori * 0.15, 0.002 * (x - arm.ready)])
+    sol = least_squares(resid, np.clip(x0, arm.lo + 1e-7, arm.hi - 1e-7), bounds=(arm.lo, arm.hi))
+    r = arm.report(sol.x, pos, rot)
+    if r["pos_err"] > 0.003 or np.degrees(r["ori_err"]) > 1.5:
+        r2 = arm.solve(pos, rot, seeds=seeds)
+        if r2["pos_err"] < r["pos_err"]:
+            r = r2
+    r["arm_clear"] = arm_clearance(arm, r["q"])
+    r["ok"] = r["pos_err"] <= 0.003 and np.degrees(r["ori_err"]) <= 1.5 and r["s_min"] > 0.05
+    return r
+
+
+# The rod's axis direction at hand yaw 0, from the workcell spawn: lying = 90 deg about X (mesh z -> -y),
+# then yawed BOLT_YAW_DEG about Z. Its +end is the one the tilted-rod reset raises; the wrist roll for a
+# tilt theta is a rotation of -theta about n = z x u (horizontal), which turns the hand's approach axis
+# from vertical to the rod's up-normal. tools/test_reach_grasp.py checks the env agrees with this vector.
+BOLT_YAW_DEG = -136.3
+U0 = np.array([np.cos(np.radians(BOLT_YAW_DEG)), np.sin(np.radians(BOLT_YAW_DEG)), 0.0])   # measured in the env: (-0.723, -0.691)
+BOLT_REST_Z = 0.961                 # the lying rod's centre height (TABLE_TOP + 0.011)
+OFF3 = np.array([BOLT_OFFSET_XY[0], BOLT_OFFSET_XY[1], BOLT_REST_Z - WRIST_Z_CONTACT])   # rod centre - wrist, hand yaw 0, contact
+
+
+def wrist_pose_for(psi, tilt, g, h):
+    """Wrist (pos, R) that puts the pinch on the grasp point g (world) for a rod at hand yaw psi tilted
+    `tilt` from horizontal, at standoff h along the approach axis."""
+    Rz = R.from_rotvec([0, 0, psi])
+    u = Rz.apply(U0)
+    n = np.cross([0, 0, 1.0], u)
+    Rt = R.from_rotvec(-tilt * n / np.linalg.norm(n)) if abs(tilt) > 1e-9 else R.identity()
+    Rw = Rt * Rz
+    m = Rw.apply([0, 0, 1.0])
+    pos = g - Rw.apply(OFF3) + h * m
+    return pos, Rw * WRIST_ROT
+
+
+def _solve_yaw(psi, offs, heights, lam, seeds, free_waist, min_slack, tilts=(0.0,)):
+    """All (xy, height, tilt) buckets of one bolt yaw. Returns rows of
+    (psi, dx, dy, h, q, J_sharp, s_min, pos_err, ori_err_deg, ok, waist(3), arm_clear, tilt)."""
+    arm = _make_arm(free_waist)
+    q0 = np.array(PIPELINE_CONTACT)
+    Rz = R.from_rotvec([0, 0, psi])
+    rows, warm = [], {}
+    scan = waist_scan() if free_waist else (None,)
+    for tilt in tilts:
+      for dx in offs:
+        for dy in offs:
+            bolt = np.array([0.5474 + dx, -0.1099 + dy])
+            wxy = bolt - Rz.as_matrix()[:2, :2] @ BOLT_OFFSET_XY
+            g = np.array([bolt[0], bolt[1], BOLT_REST_Z])
+            step = offs[1] - offs[0] if len(offs) > 1 else 0.0
+            seed = warm.get((round(dx, 4), round(dy, 4)),
+                            warm.get((round(dx - step, 4), round(dy, 4)), q0))
+            best = None                      # (score, waist, per-height reports)
+            for w in scan:
+                held = (WAIST_HELD,) if w is None else tuple(w)
+                if w is not None:
+                    _pin_waist(arm, w)
+                reps, s = [], []
+                for h in heights:
+                    pos, rot = wrist_pose_for(psi, tilt, g, h)
+                    r = _solve_pose(arm, pos, rot, seed, held, seeds)
+                    r["ok"] = r["ok"] and r["s_min"] >= min_slack and r["arm_clear"] >= arm_clear_min(h)
+                    reps.append(r)
+                    s.append(r["s_min"] if r["ok"] else -1.0)
+                    if not r["ok"]:
+                        break            # this hold cannot serve the column
+                score = min(s) if len(reps) == len(heights) else -1.0
+                if best is None or score > best[0] + 1e-6:
+                    best = (score, w, reps)
+                if score >= WAIST_GOOD:
+                    break
+            score, w, reps = best
+            held = (WAIST_HELD,) if w is None else tuple(w)
+            waist = WAIST_NOMINAL if w is None else tuple(w)
+            for h, r in zip(heights, reps):
+                q = np.array(r["q"][:7])
+                ok = bool(r["ok"]) and score > 0.0
+                if ok:
+                    warm[(round(dx, 4), round(dy, 4))] = q
+                Js = damped_pinv(jacobian(arm, q, held=held), lam) if ok else np.zeros((7, 6))
+                rows.append((psi, dx, dy, h, q, Js, r["s_min"], r["pos_err"], np.degrees(r["ori_err"]), ok, waist,
+                             r["arm_clear"], tilt))
+            for i in range(len(reps), len(heights)):    # heights the chosen hold never reached
+                rows.append((psi, dx, dy, heights[i], q0, np.zeros((7, 6)), -1.0, 1.0, 180.0, False, waist, -1.0, tilt))
+    return rows
+
+
+def solve_grid(args) -> int:
+    """Arm solutions + Jacobians over bolt yaw x bolt xy x standoff height.
+
+    For a bolt yawed by psi about world z (relative to the pipeline's pose)
+    and shifted by (dx, dy), the pinch is the same pinch rotated by psi: the
+    wrist target is bolt_xy - R(psi) @ BOLT_OFFSET_XY at the same height, with
+    orientation R(psi) * WRIST_ROT. Every pinch metric and the table clearance
+    are invariant to psi; only arm reachability changes, which is what the
+    per-bucket s_min reports.
+
+    With --free-waist the three waist joints (chain: waistRoll, waistPitch,
+    waistYaw, torso) are held variables, chosen per (yaw, xy) column from
+    waist_scan() by the best worst-height arm slack, and written to the bucket
+    file as `waist` (pitch, yaw, roll). The env holds them for the episode
+    exactly as it holds the pitch at 1.05 today. One triple per column,
+    because the arm descends through every height of the column in one
+    episode. --min-slack sets the slack a bucket needs to count as reachable.
+    """
+    import time
+    from multiprocessing import Pool
+    lam = args.damping if args.damping is not None else 0.05
+    yaws = np.radians(np.arange(args.yaw_deg[0], args.yaw_deg[1] + 1e-9, args.yaw_deg[2]))
+    offs = np.arange(args.xy_cm[0], args.xy_cm[1] + 1e-9, args.xy_cm[2]) / 100.0
+    heights = np.array(args.heights)
+    t0 = time.time()
+    total = len(yaws) * len(offs) ** 2 * len(heights) * len(args.tilts_deg)
+    tilts = tuple(np.radians(args.tilts_deg))
+    jobs = [(float(psi), offs, heights, lam, args.seeds, args.free_waist, args.min_slack, tilts) for psi in yaws]
+    with Pool(min(len(jobs), os.cpu_count() or 1)) as pool:
+        per_yaw = pool.starmap(_solve_yaw, jobs)
+    rows = [r for rs in per_yaw for r in rs]
+    print(f"  {len(rows)}/{total} buckets in {time.time() - t0:.0f} s, reachable {sum(1 for r in rows if r[9])}")
+    default = os.path.join(HERE, "..", "genesis_rl", "tasks", "wuji_reach_grasp",
+                           "pose_buckets_tilt.npz" if len(args.tilts_deg) > 1 or args.tilts_deg[0] != 0.0
+                           else "pose_buckets_waist.npz" if args.free_waist else "pose_buckets.npz")
+    out = os.path.abspath(args.out or default)
+    np.savez(out,
+             yaw=np.array([r[0] for r in rows]), dx=np.array([r[1] for r in rows]), dy=np.array([r[2] for r in rows]),
+             h=np.array([r[3] for r in rows]), q=np.array([r[4] for r in rows]), j_sharp=np.array([r[5] for r in rows]),
+             s_min=np.array([r[6] for r in rows]), pos_err=np.array([r[7] for r in rows]),
+             ori_err_deg=np.array([r[8] for r in rows]), ok=np.array([r[9] for r in rows]),
+             waist=np.array([r[10] for r in rows]), arm_clear=np.array([r[11] for r in rows]),
+             tilt=np.array([r[12] for r in rows]),
+             free_waist=bool(args.free_waist), min_slack=args.min_slack,
+             bolt_offset_xy=BOLT_OFFSET_XY, wrist_rot=WRIST_ROT.as_quat(), waist_pitch_held=WAIST_HELD)
+    ok = np.array([r[9] for r in rows])
+    print(f"\nwrote {out}: {len(rows)} buckets, {ok.sum()} reachable")
+    # reachability by yaw, as a table: fraction of xy x height buckets reachable, worst s_min, waist holds used
+    print(f"{'yaw deg':>8} {'reachable':>10} {'min s_min':>10} {'min clear':>10}   waist holds (pitch, yaw, roll)")
+    for psi in yaws:
+      for tilt in tilts:
+        sel = [r for r in rows if abs(r[0] - psi) < 1e-9 and abs(r[12] - tilt) < 1e-9]
+        okk = [r for r in sel if r[9]]
+        ws = sorted(set(tuple(round(v, 2) for v in r[10]) for r in okk))
+        if len(tilts) > 1:
+            print(f"  tilt {np.degrees(tilt):5.1f}:", end="")
+        print(f"{np.degrees(psi):8.1f} {len(okk)/len(sel)*100:9.0f}% "
+              f"{min((r[6] for r in okk), default=float('nan')):10.3f} "
+              f"{min((r[11] for r in okk), default=float('nan')):10.3f}   {ws}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -106,7 +356,23 @@ def main() -> int:
                          "pipeline's baked matrix, searched over a small grid")
     ap.add_argument("--verify", action="store_true", help="also verify the first-order reset "
                     "over the level ranges by full FK")
+    ap.add_argument("--grid", action="store_true",
+                    help="pose-generalisation buckets: solve the arm over a grid of BOLT yaw and xy "
+                         "offsets at every height and write pose_buckets.npz beside the env")
+    ap.add_argument("--yaw-deg", type=float, nargs=3, default=[-90.0, 90.0, 15.0], metavar=("LO", "HI", "STEP"))
+    ap.add_argument("--xy-cm", type=float, nargs=3, default=[-5.0, 5.0, 2.5], metavar=("LO", "HI", "STEP"))
+    ap.add_argument("--free-waist", action="store_true",
+                    help="with --grid: also choose a held waist (pitch, yaw, roll) per (bolt yaw, xy) "
+                         "column; writes pose_buckets_waist.npz instead")
+    ap.add_argument("--tilts-deg", type=float, nargs="+", default=[0.0],
+                    help="with --grid: rod tilts from horizontal to solve the ROLLED wrist for (level 21+); "
+                         "more than one, or a non-zero one, writes pose_buckets_tilt.npz")
+    ap.add_argument("--min-slack", type=float, default=0.05,
+                    help="with --grid: arm slack a bucket needs to count as reachable")
+    ap.add_argument("--out", type=str, default=None)
     args = ap.parse_args()
+    if args.grid:
+        return solve_grid(args)
 
     arm = pp.Arm(pp._load_solver(), waist_max=1.36)
     arm.lo[-1], arm.hi[-1] = WAIST_HELD - 1e-6, WAIST_HELD + 1e-6
