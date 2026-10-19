@@ -2294,6 +2294,26 @@ Against the earlier, non-binding maps (99 % nearly everywhere): the rod
 is graspable at every point along it, but the ends have a real cost that
 those maps hid because the fingers went to the band regardless.
 
+## Levels 53 and 54 — 4 cm walls, and the stall fix (2026-10-18/19, night)
+
+All from the level-52 pick with `--entropy-coef 0 --reset-std 0.2 --lr 2e-4 --lr-schedule fixed`; the GPU was shared
+with a hug-grasp run (24-34 s / iteration), so the stages were cut short (`logs/chains/chain_L53.sh`, `govern_L53.sh`).
+Pickability probe, 3072 heap episodes each, success by bin fill:
+
+| | 5-10 rods | 15-25 | 40-60 | all | standing | latched |
+|---|---|---|---|---|---|---|
+| level-52 pick, 8 cm walls | 34.6 % | 27.7 % | 50.7 % | 39.1 % | 26.6 % | 50.4 % |
+| level-54 pick (8 cm, the fix, 300 it.) `L54/2026-10-18_18-48-28/model_21200` | 31.7 % | 23.9 % | 49.7 % | 36.7 % | 28.7 % | 49.2 % |
+| level-52 pick, 4 cm walls, untrained | 65.0 % | 50.6 % | 60.0 % | 57.5 % | 33.9 % | 75.6 % |
+| level-53 pick (4 cm, 400 it.) `L53/2026-10-18_14-48-04/model_21300` | 69.6 % | 48.9 % | 59.5 % | 57.5 % | 48.2 % | 76.5 % |
+| **level-53 pick (+250 it.)** `L53/2026-10-18_21-05-22/model_21550` | **72.5 %** | 51.6 % | 58.9 % | **58.6 %** | 39.5 % | 77.9 % |
+
+The stall fix did what it was for (the std fell 0.20 -> 0.13 instead of rising) and nothing else: level 53's training
+success sat at 58 % from iteration 100 on, and the fix did not help the 8 cm bin (level 54 -2.4 points). The whole
+gain is the wall height; training on the low-wall bin added ~1 point overall (near-empty bins +7.5, standing +5.6).
+This policy and observation set have saturated on the heap: the next gain has to come from what the policy can see
+(the free space around the rod, level 36's heap_map) or from the scene (wall height, the bin's fill).
+
 ## Level 52 — perception's choice of rod, bins at three fill levels; the wall height (2026-10-16)
 
 The target is the highest exposed reachable rod (FillCfg.pick "highest", a standing rod scored 15 mm lower), the
