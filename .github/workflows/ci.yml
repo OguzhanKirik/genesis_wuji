@@ -76,33 +76,70 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
+    env:
+      IMAGE_TAG: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.tag }}-${{ matrix.arch }}
+      ADAM_TAG: ${{ needs.prepare.outputs.adam_tag }}
+      # Where the adam-moveit base comes from, decided by what the repository holds:
+      #  - secret ADAM_MOVEIT_DEPLOY_KEY (a read-only deploy key on adam-moveit): check adam-moveit out at
+      #    variable ADAM_MOVEIT_REF and build its `deploy` target here (BASE_IMAGE=ubuntu:24.04, the same recipe
+      #    as adam-moveit's own release and the Jetson Thor), then build this image on top. Needs no package
+      #    access at all. ~20-30 min per architecture.
+      #  - otherwise pull ghcr.io/<owner>/adam-moveit:<ADAM_IMAGE_TAG>: the package is private and scoped to
+      #    adam-moveit, so either the genesis_rl repository has been granted read access on it (package settings
+      #    -> Manage Actions access) or the secret GHCR_PULL_TOKEN (read:packages) is set.
+      BUILD_BASE_FROM_SOURCE: ${{ secrets.ADAM_MOVEIT_DEPLOY_KEY != '' && secrets.GHCR_PULL_TOKEN == '' }}
+      ADAM_MOVEIT_REF: ${{ vars.ADAM_MOVEIT_REF || 'main' }}
     steps:
       - uses: actions/checkout@v5
-      # The base image (adam-moveit's package) is private and scoped to that repository, so this repository's
-      # GITHUB_TOKEN cannot pull it (403). Either grant the genesis_rl repository read access on the adam-moveit
-      # package (package settings -> Manage Actions access) and GITHUB_TOKEN works, or add the secret
-      # GHCR_PULL_TOKEN (a token with read:packages) and it is used for the pull; the push uses GITHUB_TOKEN.
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ secrets.GHCR_PULL_USER || github.actor }}
           password: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
-      - name: Free runner disk (the adam-moveit base is several GB)
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-      - uses: docker/setup-buildx-action@v3
+      - name: Free runner disk (the ROS layer plus the deploy image need ~15 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/lib/jvm || true
+          docker system prune -af --volumes >/dev/null 2>&1 || true
+          df -h / | tail -1
       - name: The exported policies the image ships
         run: |
           # handoff/policy is not in git (checkpoints are exported on the training machine); the image needs
           # the directory, so an empty one is created when it is missing and the robot mounts a real set.
           mkdir -p handoff/policy && ls handoff/policy
-      - uses: docker/build-push-action@v6
+      - name: Check out adam-moveit (deploy key)
+        if: env.BUILD_BASE_FROM_SOURCE == 'true'
+        uses: actions/checkout@v5
         with:
-          context: .
-          file: deploy/Dockerfile
-          platforms: ${{ matrix.platform }}
-          build-args: ADAM_IMAGE_TAG=${{ needs.prepare.outputs.adam_tag }}
-          tags: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.tag }}-${{ matrix.arch }}
-          push: true
+          repository: REVEL-Robotics/adam-moveit
+          ref: ${{ env.ADAM_MOVEIT_REF }}
+          ssh-key: ${{ secrets.ADAM_MOVEIT_DEPLOY_KEY }}
+          path: adam-moveit
+      - name: Build the adam-moveit base from source
+        if: env.BUILD_BASE_FROM_SOURCE == 'true'
+        run: |
+          cd adam-moveit
+          echo "adam-moveit $(git rev-parse --short HEAD) -> adam-moveit-base:local (deploy target, ubuntu:24.04)"
+          DOCKER_BUILDKIT=1 docker build --target deploy --build-arg BASE_IMAGE=ubuntu:24.04 \
+            --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" -t adam-moveit-base:local .
+          docker builder prune -af >/dev/null 2>&1 || true
+          df -h / | tail -1
+      - name: Build and push the deploy image
+        run: |
+          if [ "$BUILD_BASE_FROM_SOURCE" = "true" ]; then
+            base=adam-moveit-base:local
+            base_ref="adam-moveit@$ADAM_MOVEIT_REF (built from source)"
+          else
+            owner="${GITHUB_REPOSITORY_OWNER,,}"
+            base="ghcr.io/${owner}/adam-moveit:${ADAM_TAG}"
+            base_ref="$base"
+          fi
+          echo "base: $base_ref"
+          DOCKER_BUILDKIT=1 docker build -f deploy/Dockerfile --build-arg BASE_IMAGE="$base" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.base.name=$base_ref" \
+            -t "$IMAGE_TAG" .
+          docker push "$IMAGE_TAG"
 
   manifest:
     name: publish the multi-arch tag
