@@ -1,0 +1,457 @@
+schema: 1
+source: 'adam-rl export: logs/rsl_rl/adam_u30_wuji_reach_grasp_L53/2026-10-18_21-05-22/model_21550.pt
+  (iteration 21550), level 53 ''bin_highest_low_walls'''
+control:
+  rate_hz: 30
+observation:
+  layout:
+  - name: bolt_pos_rel
+    size: 3
+  - name: bolt_rot_rel
+    size: 6
+  - name: wrist_lin_vel
+    size: 3
+  - name: wrist_ang_vel
+    size: 3
+  - name: finger_q
+    size: 9
+  - name: finger_qd
+    size: 9
+  - name: last_action
+    size: 8
+  - name: tip_forces
+    size: 3
+  - name: contacts
+    size: 3
+  - name: ep_time
+    size: 1
+  - name: arm_q_norm
+    size: 7
+  - name: tip_dist
+    size: 3
+  - name: safety
+    size: 16
+  episode_max_steps: 707
+  tip_force_scale: 40.0
+  arm_q_limits:
+    lo:
+    - -3.61299991607666
+    - -2.792999744415283
+    - -2.5829997062683105
+    - -2.495999813079834
+    - -2.669999837875366
+    - -0.9599999189376831
+    - -0.9599999189376831
+    hi:
+    - 2.0419998168945312
+    - 0.628000020980835
+    - 2.5829997062683105
+    - 0.20899999141693115
+    - 2.669999837875366
+    - 0.9599999189376831
+    - 0.9599999189376831
+  tactile: false
+  effort_obs:
+    force_per_nm: 20.0
+    contact_nm: 0.1
+action:
+  effective_translation: 0.0033333333333333335
+  effective_rotation: 0.016666666666666666
+  wrist_smoothing: 0.5
+  action_smoothing: 0.3
+  yaw_rate_scale: 0.25
+ik:
+  dls_damping: 0.05
+  nullspace_gain: 0.3
+  joint_margin: 0.05
+  max_joint_velocity: 2.0
+  singularity_threshold: 0.0001
+  workspace:
+    radius_xy: 0.15
+    z_min: 0.02
+    z_max: 0.35
+    nominal_wrist_offset_xy:
+    - -0.0474
+    - -0.0901
+wrist:
+  link: wristRollRight
+  offset:
+    xyz:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+arm:
+  joints:
+  - shoulderPitch_Right
+  - shoulderRoll_Right
+  - shoulderYaw_Right
+  - elbow_Right
+  - wristYaw_Right
+  - wristPitch_Right
+  - wristRoll_Right
+hand:
+  thumb_joints:
+  - r_thumb_cmc_flex
+  - r_thumb_mcp
+  - r_thumb_ip
+  finger_joints:
+  - r_index_finger_mcp_flex
+  - r_index_finger_pip
+  - r_index_finger_dip
+  - r_middle_finger_mcp_flex
+  - r_middle_finger_pip
+  - r_middle_finger_dip
+  open:
+    r_thumb_cmc_flex: 0.5164
+    r_thumb_mcp: 0.628
+    r_thumb_ip: 0.628
+    r_index_finger_mcp_flex: 0.628
+    r_index_finger_pip: 0.8376
+    r_index_finger_dip: 0.628
+    r_middle_finger_mcp_flex: 0.628
+    r_middle_finger_pip: 0.8376
+    r_middle_finger_dip: 0.628
+  closed:
+    r_thumb_cmc_flex: 0.7746
+    r_thumb_mcp: 0.942
+    r_thumb_ip: 0.942
+    r_index_finger_mcp_flex: 0.942
+    r_index_finger_pip: 1.2564
+    r_index_finger_dip: 0.942
+    r_middle_finger_mcp_flex: 0.942
+    r_middle_finger_pip: 1.2564
+    r_middle_finger_dip: 0.942
+  held:
+    r_thumb_cmc_abd: -0.85
+    r_index_finger_mcp_abd: 0.0
+    r_middle_finger_mcp_abd: 0.0
+    r_ring_finger_mcp_abd: 0.0
+    r_pinky_mcp_abd: 0.0
+    r_ring_finger_mcp_flex: 0.0
+    r_ring_finger_pip: 0.0
+    r_ring_finger_dip: 0.0
+    r_pinky_mcp_flex: 0.0
+    r_pinky_pip: 0.0
+    r_pinky_dip: 0.0
+  tips:
+    thumb:
+      link: r_thumb_distal
+      offset:
+      - 0.0
+      - 0.0
+      - -0.02978
+    index:
+      link: r_index_finger_distal
+      offset:
+      - 0.0
+      - 0.0
+      - -0.02475
+    middle:
+      link: r_middle_finger_distal
+      offset:
+      - 0.0
+      - 0.0
+      - -0.02475
+  base_targets:
+    r_index_finger_mcp_flex: 0.628000020980835
+    r_middle_finger_mcp_flex: 0.628000020980835
+    r_pinky_mcp_flex: 0.0
+    r_ring_finger_mcp_flex: 0.0
+    r_thumb_cmc_flex: 0.5163999795913696
+    r_index_finger_mcp_abd: 0.0
+    r_middle_finger_mcp_abd: 0.0
+    r_pinky_mcp_abd: 0.0
+    r_ring_finger_mcp_abd: 0.0
+    r_thumb_cmc_abd: -0.8500000238418579
+    r_index_finger_pip: 0.8375999927520752
+    r_middle_finger_pip: 0.8375999927520752
+    r_pinky_pip: 0.0
+    r_ring_finger_pip: 0.0
+    r_thumb_mcp: 0.628000020980835
+    r_index_finger_dip: 0.628000020980835
+    r_middle_finger_dip: 0.628000020980835
+    r_pinky_dip: 0.0
+    r_ring_finger_dip: 0.0
+    r_thumb_ip: 0.628000020980835
+phase:
+  settle_in: 15
+  grasp_max_steps: 120
+  grasp_retry_steps: 60
+  settle_steps: 10
+  drag_steps: 10
+  free_prelift: true
+  grip_check: true
+  grip_check_steps: 8
+  grip_test_total_m: 0.024
+  grip_check_ratio: 0.4
+  grip_check_min_tips_m: 0.004
+  grip_check_late: false
+  lift_steps: 40
+  lift_slow_steps: 10
+  lift_slow_step_m: 0.001
+  lift_height_m: 0.1
+  hold_steps: 30
+  retry_max: 3
+  retry_backoff_m: 0.0
+  success_lift_m: 0.05
+  up_threshold_m: 0.02
+  sense_est: true
+  roll_cap: 1.5707963267948966
+  lift_dir:
+  - 0.0
+  - 0.0
+  - 1.0
+  latch:
+    mode: torque
+    steps: 4
+    tau_min_nm: 0.2
+    grasp_region_m: 0.05
+    pinch_centre_tol_m: 0.01
+    rel_vel_max_m_s: 0.1
+    est_vel_window: 5
+safety:
+  groups:
+    tips:
+    - - r_thumb_distal
+      - - 0.0
+        - 0.0
+        - -0.023780000000000003
+      - 0.006
+    - - r_index_finger_distal
+      - - 0.0
+        - 0.0
+        - -0.018750000000000003
+      - 0.006
+    - - r_middle_finger_distal
+      - - 0.0
+        - 0.0
+        - -0.018750000000000003
+      - 0.006
+    - - r_ring_finger_distal
+      - - 0.0
+        - 0.0
+        - -0.018750000000000003
+      - 0.006
+    - - r_pinky_distal
+      - - 0.0
+        - 0.0
+        - -0.018750000000000003
+      - 0.006
+    - - r_thumb_distal
+      - - 0.0
+        - 0.0
+        - -0.01489
+      - 0.007
+    - - r_index_finger_distal
+      - - 0.0
+        - 0.0
+        - -0.012375
+      - 0.007
+    - - r_middle_finger_distal
+      - - 0.0
+        - 0.0
+        - -0.012375
+      - 0.007
+    - - r_ring_finger_distal
+      - - 0.0
+        - 0.0
+        - -0.012375
+      - 0.007
+    - - r_pinky_distal
+      - - 0.0
+        - 0.0
+        - -0.012375
+      - 0.007
+    - - r_thumb_middle
+      - - 0.0
+        - 0.0
+        - -0.02
+      - 0.008
+    - - r_index_finger_middle
+      - - 0.0
+        - 0.0
+        - -0.02
+      - 0.008
+    - - r_middle_finger_middle
+      - - 0.0
+        - 0.0
+        - -0.02
+      - 0.008
+    palm:
+    - - wristRollRight
+      - - -0.025
+        - 0.0
+        - -0.01
+      - 0.02
+    - - wristRollRight
+      - - -0.025
+        - 0.0
+        - -0.04
+      - 0.02
+    - - wristRollRight
+      - - -0.025
+        - 0.0
+        - -0.07
+      - 0.02
+    - - wristRollRight
+      - - 0.01
+        - 0.0
+        - -0.01
+      - 0.02
+    - - wristRollRight
+      - - 0.01
+        - 0.0
+        - -0.04
+      - 0.02
+    - - wristRollRight
+      - - 0.01
+        - 0.0
+        - -0.07
+      - 0.02
+    - - wristPitchRight
+      - - 0.0
+        - 0.0
+        - 0.0
+      - 0.03
+    forearm:
+    - - elbowRight
+      - - -0.013
+        - -0.029
+        - -0.031
+      - 0.045
+    - - wristYawRight
+      - - 0.0
+        - 0.0
+        - -0.02
+      - 0.048
+    - - wristYawRight
+      - - 0.0
+        - 0.0
+        - -0.095
+      - 0.048
+    - - wristYawRight
+      - - 0.0
+        - 0.0
+        - -0.17
+      - 0.048
+    upperarm:
+    - - shoulderYawRight
+      - - 0.001
+        - -0.003
+        - -0.02
+      - 0.05
+    - - shoulderYawRight
+      - - 0.001
+        - -0.003
+        - -0.12
+      - 0.05
+    - - shoulderYawRight
+      - - 0.001
+        - -0.003
+        - -0.22
+      - 0.05
+    - - shoulderRollRight
+      - - -0.033
+        - -0.017
+        - -0.01
+      - 0.065
+  vec_clamp: 1.0
+  dist_clamp:
+  - -0.1
+  - 0.5
+  extra_boxes: []
+  training_boxes:
+  - lo:
+    - 0.6574
+    - -0.1979
+    - 0.95
+    hi:
+    - 0.6654
+    - -0.021900000000000003
+    - 0.99
+  - lo:
+    - 0.4294
+    - -0.1979
+    - 0.95
+    hi:
+    - 0.4374
+    - -0.021900000000000003
+    - 0.99
+  - lo:
+    - 0.4294
+    - -0.029899999999999996
+    - 0.95
+    hi:
+    - 0.6654
+    - -0.021899999999999996
+    - 0.99
+  - lo:
+    - 0.4294
+    - -0.19790000000000002
+    - 0.95
+    hi:
+    - 0.6654
+    - -0.1899
+    - 0.99
+rod:
+  radius: 0.0125
+  half_len: 0.0175
+pregrasp:
+  wrist_rot_xyzw:
+  - -0.1821
+  - -0.7296
+  - 0.4661
+  - 0.4661
+  bolt_offset_xyz:
+  - 0.0474
+  - 0.09010000000000001
+  - -0.04819999999999991
+  standoff_m:
+  - 0.075
+  - 0.1
+  wrist_roll: true
+workspace:
+  rod_xy_centre:
+  - 0.5474
+  - -0.1099
+  xy_core_m: 0.05
+  xy_edge_m: 0.025
+  hand_yaw_rad:
+  - -1.0471975511965976
+  - 0.7853981633974483
+  hand_yaw_core_rad:
+  - -0.7853981633974483
+  - 0.5235987755982988
+  pinch_angle_rad: 0.7853981633974483
+  yaw0_rad: -2.3788837477147777
+  lying_max_deg: 12.0
+  leaning_max_deg: 40.0
+  standing_min_deg: 75.0
+  stand_penalty_m: 0.015
+  resting_gap_m: 0.003
+  table_top_m: 0.95
+  bin_inner_m:
+  - 0.22
+  - 0.16
+  bin_wall_height_m: 0.04
+training:
+  perception:
+    bias_xy_m: 0.008
+    bias_z_m: 0.005
+    bias_rot_rad: 0.08726646259971647
+    noise_m:
+    - 0.001
+    - 0.003
+    latency_steps:
+    - 1
+    - 4
+    dropout: 0.03
+  hw_latch: true
+  sense_est: true
+  tactile: false
+  table_top_m: 0.95
+  robot_root_z_m: 0.05025000000000002

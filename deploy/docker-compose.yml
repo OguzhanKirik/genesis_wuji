@@ -1,0 +1,51 @@
+# The two containers of the grasp cell: adam-moveit's robot stack and this application. Both on the host
+# network and the same ROS domain (set ROS_DOMAIN_ID in .env; never the bench's live session domain).
+#
+#   ADAM_IMAGE_TAG=v0.3.0 docker compose -f deploy/docker-compose.yml up -d robot      # adam-moveit (sim or real)
+#   ADAM_IMAGE_TAG=v0.3.0 docker compose -f deploy/docker-compose.yml run --rm app     # a shell in the application
+#
+# In sim (the bench): `robot` runs adam-moveit's Isaac stack with the Wuji design and the right-hand bin
+# (ws/src/genesis_isaac sim.launch.py design:=genesis_wuji workcell_layout:=workcell_bin_right.json); on the robot
+# (the Thor): real.launch.py. The application's launch lines are in deploy/README.md.
+services:
+  robot:
+    image: ghcr.io/revel-robotics/adam-moveit:${ADAM_IMAGE_TAG:?set ADAM_IMAGE_TAG}
+    network_mode: host
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - ADAM_MODE=${ADAM_MODE:-sim}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["bash", "-lc", "sleep infinity"]
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        ADAM_IMAGE_TAG: ${ADAM_IMAGE_TAG:?set ADAM_IMAGE_TAG}
+    image: genesis-rl-deploy:${APP_TAG:-dev}
+    network_mode: host
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+    volumes:
+      - ../handoff/policy:/handoff/policy:ro
+    devices:
+      - /dev/bus/usb:/dev/bus/usb   # the head RealSense on the robot
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["bash"]

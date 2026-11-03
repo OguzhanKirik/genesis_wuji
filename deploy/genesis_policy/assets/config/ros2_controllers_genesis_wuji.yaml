@@ -1,0 +1,253 @@
+# genesis_wuji variant of ros2_controllers.yaml. Body controllers match that
+# file; each hand lists the 20 Wuji joints as position commands. Keep the
+# body sections in step with ros2_controllers.yaml.
+controller_manager:
+  ros__parameters:
+    update_rate: 400  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    left_arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    right_arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    left_hand_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    right_hand_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    waist_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    head_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+left_arm_controller:
+  ros__parameters:
+    joints:
+      - shoulderPitch_Left
+      - shoulderRoll_Left
+      - shoulderYaw_Left
+      - elbow_Left
+      - wristYaw_Left
+      - wristPitch_Left
+      - wristRoll_Left
+    command_interfaces:
+      - position
+      - velocity
+    state_interfaces:
+      - position
+      - velocity
+    interpolation_method: splines
+    allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    constraints:
+      goal_time: 0.5
+      stopped_velocity_tolerance: 0.05
+      shoulderPitch_Left: {goal: 0.10}
+      shoulderRoll_Left: {goal: 0.10}
+      shoulderYaw_Left: {goal: 0.10}
+      elbow_Left: {goal: 0.10}
+      wristYaw_Left: {goal: 0.10}
+      wristPitch_Left: {goal: 0.10}
+      wristRoll_Left: {goal: 0.10}
+
+right_arm_controller:
+  ros__parameters:
+    joints:
+      - shoulderPitch_Right
+      - shoulderRoll_Right
+      - shoulderYaw_Right
+      - elbow_Right
+      - wristYaw_Right
+      - wristPitch_Right
+      - wristRoll_Right
+    command_interfaces:
+      - position
+      - velocity
+    state_interfaces:
+      - position
+      - velocity
+    interpolation_method: splines
+    allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    constraints:
+      goal_time: 0.5
+      stopped_velocity_tolerance: 0.05
+      shoulderPitch_Right: {goal: 0.10}
+      shoulderRoll_Right: {goal: 0.10}
+      shoulderYaw_Right: {goal: 0.10}
+      elbow_Right: {goal: 0.10}
+      wristYaw_Right: {goal: 0.10}
+      wristPitch_Right: {goal: 0.10}
+      wristRoll_Right: {goal: 0.10}
+
+left_hand_controller:
+  ros__parameters:
+    joints:
+      - l_thumb_cmc_flex
+      - l_thumb_cmc_abd
+      - l_thumb_mcp
+      - l_thumb_ip
+      - l_index_finger_mcp_flex
+      - l_index_finger_mcp_abd
+      - l_index_finger_pip
+      - l_index_finger_dip
+      - l_middle_finger_mcp_flex
+      - l_middle_finger_mcp_abd
+      - l_middle_finger_pip
+      - l_middle_finger_dip
+      - l_ring_finger_mcp_flex
+      - l_ring_finger_mcp_abd
+      - l_ring_finger_pip
+      - l_ring_finger_dip
+      - l_pinky_mcp_flex
+      - l_pinky_mcp_abd
+      - l_pinky_pip
+      - l_pinky_dip
+    command_interfaces:
+      - position
+    # The wujihandros2 driver publishes no velocity; tracking against a
+    # constant zero would be wrong, so position only, as for the PND hand.
+    state_interfaces:
+      - position
+    interpolation_method: splines
+    allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    constraints:
+      goal_time: 0.5
+      l_thumb_cmc_flex: {goal: 0.05}
+      l_thumb_cmc_abd: {goal: 0.05}
+      l_thumb_mcp: {goal: 0.05}
+      l_thumb_ip: {goal: 0.05}
+      l_index_finger_mcp_flex: {goal: 0.05}
+      l_index_finger_mcp_abd: {goal: 0.05}
+      l_index_finger_pip: {goal: 0.05}
+      l_index_finger_dip: {goal: 0.05}
+      l_middle_finger_mcp_flex: {goal: 0.05}
+      l_middle_finger_mcp_abd: {goal: 0.05}
+      l_middle_finger_pip: {goal: 0.05}
+      l_middle_finger_dip: {goal: 0.05}
+      l_ring_finger_mcp_flex: {goal: 0.05}
+      l_ring_finger_mcp_abd: {goal: 0.05}
+      l_ring_finger_pip: {goal: 0.05}
+      l_ring_finger_dip: {goal: 0.05}
+      l_pinky_mcp_flex: {goal: 0.05}
+      l_pinky_mcp_abd: {goal: 0.05}
+      l_pinky_pip: {goal: 0.05}
+      l_pinky_dip: {goal: 0.05}
+
+right_hand_controller:
+  ros__parameters:
+    joints:
+      - r_thumb_cmc_flex
+      - r_thumb_cmc_abd
+      - r_thumb_mcp
+      - r_thumb_ip
+      - r_index_finger_mcp_flex
+      - r_index_finger_mcp_abd
+      - r_index_finger_pip
+      - r_index_finger_dip
+      - r_middle_finger_mcp_flex
+      - r_middle_finger_mcp_abd
+      - r_middle_finger_pip
+      - r_middle_finger_dip
+      - r_ring_finger_mcp_flex
+      - r_ring_finger_mcp_abd
+      - r_ring_finger_pip
+      - r_ring_finger_dip
+      - r_pinky_mcp_flex
+      - r_pinky_mcp_abd
+      - r_pinky_pip
+      - r_pinky_dip
+    command_interfaces:
+      - position
+    # The wujihandros2 driver publishes no velocity; tracking against a
+    # constant zero would be wrong, so position only, as for the PND hand.
+    state_interfaces:
+      - position
+    interpolation_method: splines
+    allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    constraints:
+      goal_time: 0.5
+      r_thumb_cmc_flex: {goal: 0.05}
+      r_thumb_cmc_abd: {goal: 0.05}
+      r_thumb_mcp: {goal: 0.05}
+      r_thumb_ip: {goal: 0.05}
+      r_index_finger_mcp_flex: {goal: 0.05}
+      r_index_finger_mcp_abd: {goal: 0.05}
+      r_index_finger_pip: {goal: 0.05}
+      r_index_finger_dip: {goal: 0.05}
+      r_middle_finger_mcp_flex: {goal: 0.05}
+      r_middle_finger_mcp_abd: {goal: 0.05}
+      r_middle_finger_pip: {goal: 0.05}
+      r_middle_finger_dip: {goal: 0.05}
+      r_ring_finger_mcp_flex: {goal: 0.05}
+      r_ring_finger_mcp_abd: {goal: 0.05}
+      r_ring_finger_pip: {goal: 0.05}
+      r_ring_finger_dip: {goal: 0.05}
+      r_pinky_mcp_flex: {goal: 0.05}
+      r_pinky_mcp_abd: {goal: 0.05}
+      r_pinky_pip: {goal: 0.05}
+      r_pinky_dip: {goal: 0.05}
+
+waist_controller:
+  ros__parameters:
+    joints:
+      - waistRoll
+      - waistPitch
+      - waistYaw
+    command_interfaces:
+      - position
+      - velocity
+    state_interfaces:
+      - position
+      - velocity
+    interpolation_method: splines
+    allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    # Carried from the arms; not yet swept at the worst waistPitch load.
+    constraints:
+      goal_time: 0.5
+      stopped_velocity_tolerance: 0.05
+      waistRoll: {goal: 0.10}
+      waistPitch: {goal: 0.10}
+      waistYaw: {goal: 0.10}
+
+# A tracking gaze commands this controller directly, and not during a MoveIt head plan.
+head_controller:
+  ros__parameters:
+    joints:
+      - neckYaw
+      - neckPitch
+    command_interfaces:
+      - position
+      - velocity
+    state_interfaces:
+      - position
+      - velocity
+    interpolation_method: splines
+    allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    constraints:
+      goal_time: 0.5
+      stopped_velocity_tolerance: 0.05
+      neckYaw: {goal: 0.10}
+      neckPitch: {goal: 0.10}

@@ -1,0 +1,56 @@
+# The grasp cell on the Jetson Thor: two containers pulled from the GitHub registry, nothing built here.
+#
+#   robot  ghcr.io/revel-robotics/adam-moveit:<ADAM_IMAGE_TAG>-arm64      the robot stack (adam-moveit release)
+#   app    ghcr.io/revel-robotics/genesis-rl-deploy:<APP_TAG>-arm64       perception, selector, policy, grasp cycle
+#
+# Both share the host network and one ROS domain (ROS_DOMAIN_ID in .env: the robot's domain, never the bench's).
+# The robot PC answers /lowstate and takes /lowcmd on that domain; the Wuji hands speak their vendor topics.
+#
+#   ./pull.sh            docker login once (a token with read:packages), then pull both images at the tags in .env
+#   ./run.sh robot       bring the robot stack up (sim or real as ADAM_MODE says; real needs the two-key confirm)
+#   ./run.sh app         a shell in the application container with the overlay sourced
+#   ./run.sh cycle 5     the whole chain: perception, selector, policy, five grasp cycles
+#   ./stop.sh            stop both
+services:
+  robot:
+    image: ghcr.io/${REGISTRY_OWNER:-revel-robotics}/adam-moveit:${ADAM_IMAGE_TAG:?set ADAM_IMAGE_TAG in .env}${ARCH_SUFFIX:-}
+    container_name: adam_moveit
+    network_mode: host
+    ipc: host
+    privileged: true            # the robot's network interfaces and the Wuji hands' USB/serial links
+    environment:
+      - ADAM_MODE=${ADAM_MODE:-real}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:?set ROS_DOMAIN_ID in .env}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - ROBOT_ROS_DOMAIN_ID=${ROS_DOMAIN_ID}
+      - SIM_ROS_DOMAIN_ID=${ROS_DOMAIN_ID}
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI:-}
+    volumes:
+      - ./logs/robot:/root/logs
+      - /dev:/dev
+    command: ["bash", "-lc", "sleep infinity"]
+    restart: unless-stopped
+
+  app:
+    image: ghcr.io/${REGISTRY_OWNER:-revel-robotics}/genesis-rl-deploy:${APP_TAG:?set APP_TAG in .env}${ARCH_SUFFIX:-}
+    container_name: genesis_rl_app
+    network_mode: host
+    ipc: host
+    privileged: true            # the head RealSense (USB 3) and the GPU
+    runtime: nvidia
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:?set ROS_DOMAIN_ID in .env}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI:-}
+      - POLICY_NAME=${POLICY_NAME:-L53b}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - ./policy:/handoff/policy:ro        # a newer export than the one in the image, if any (same layout)
+      - ./config:/config:ro                # perception.yaml, policy.yaml: the robot's calibrated parameters
+      - ./logs/app:/logs
+      - /dev:/dev
+    depends_on:
+      - robot
+    command: ["sleep", "infinity"]
+    restart: unless-stopped

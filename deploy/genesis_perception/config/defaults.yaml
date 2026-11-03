@@ -1,0 +1,25 @@
+# Parameters of rod_perception. Two presets: the Isaac head camera (default) and a RealSense on the real head.
+# The bin box and floor height are the right-hand bin of genesis_isaac's workcell_bin_right.json in the world frame;
+# re-read them from the layout at bring-up rather than trusting these numbers.
+rod_perception:
+  ros__parameters:
+    depth_topic: /head_camera/depth/image_raw      # RealSense: /camera/camera/aligned_depth_to_color/image_raw
+    info_topic: /head_camera/camera_info           # RealSense: /camera/camera/aligned_depth_to_color/camera_info
+    rgb_topic: ''                                  # set for the yolo segmenter (RealSense: /camera/camera/color/image_raw)
+    camera_frame: ''                               # '' = the depth image's frame_id
+    world_frame: world
+    candidates_topic: /perception/rod_candidates
+    segmenter: depth                               # depth | yolo
+    yolo_model: ''
+    rod_radius_m: 0.0125
+    rod_half_len_m: 0.0175
+    bin_xy_min: [-0.20, -0.50]
+    bin_xy_max: [0.20, -0.10]
+    bin_floor_z: 0.95
+    floor_margin_m: 0.006
+    min_pixels: 60
+    min_inlier_frac: 0.6
+    max_residual_m: 0.0015
+    inlier_tol_m: 0.002
+    ransac_iters: 200
+    max_rate_hz: 15.0

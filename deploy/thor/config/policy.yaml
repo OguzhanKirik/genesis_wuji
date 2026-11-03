@@ -1,0 +1,5 @@
+# policy_node on the real hand: the Wuji drives' torque constant (N.m per A of reported current), measured at
+# bring-up (adam-rl docs/SIM_TO_REAL.md 3.4). The node refuses to start while it is 0.
+policy_node:
+  ros__parameters:
+    effort_scale_nm_per_a: 0.0

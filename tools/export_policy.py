@@ -166,6 +166,13 @@ level = dict(
                 training_boxes=([dict(lo=[float(c_ - s_ / 2) for c_, s_ in zip(c, sz)], hi=[float(c_ + s_ / 2) for c_, s_ in zip(c, sz)])
                                  for c, sz in G._bin_walls()] if lvl.bin_walls else [])),
     rod=dict(radius=float(C('BOLT_RADIUS')), half_len=float(C('BOLT_HALF_LEN'))),
+    # not read by the runtime: the pre-grasp wrist pose the episode starts from (genesis_policy.pregrasp reproduces
+    # env_cfg._nominal_wrist_general): wrist = g - R(qw) bolt_offset_xyz + standoff * R(qw) z, orientation qw * wrist_rot,
+    # qw = roll(-tilt about z x axis) * yaw(hand_yaw); the planner (MoveTo) delivers the wrist there, then the policy runs.
+    pregrasp=dict(wrist_rot_xyzw=[float(v) for v in C('WRIST_ROT')],
+                  bolt_offset_xyz=[float(G.BOLT_OFFSET_XY[0]), float(G.BOLT_OFFSET_XY[1]), float(G.BOLT_REST_Z - C('WRIST_Z_CONTACT'))],
+                  standoff_m=[float(lvl.standoff_lo), float(lvl.standoff_hi)],
+                  wrist_roll=bool(lvl.wrist_roll)),
     # not read by the runtime: where the policy can pick (genesis_policy.selector reads it). A rod centre within
     # xy_core_m of rod_xy_centre on x and y with the hand yaw inside hand_yaw_core_rad, or within xy_edge_m with the
     # hand yaw anywhere in hand_yaw_rad; hand yaw = rod yaw + pinch, |pinch| <= pinch_angle_rad, the rod yaw measured

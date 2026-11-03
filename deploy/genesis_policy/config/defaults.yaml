@@ -1,0 +1,63 @@
+# Product defaults for policy_node. Every key is a parameter (README "Parameters").
+# The launch file overlays policy_dir, design, dry_run, rate_hz and the real-mode
+# confirmation on top; a later parameter file overrides a key.
+policy_node:
+  ros__parameters:
+    # Handoff directory: actor.onnx + level.yaml (docker-compose mounts ./handoff/policy here)
+    policy_dir: "/handoff/policy/stub"
+    design: "genesis_wuji"
+    # genesis_isaac's workcell JSON (table + bin boxes); empty = the installed workcell.json
+    cell_file: ""
+    # adam-rl trained the right arm with the bin mirrored to y < 0 (README "Open questions")
+    cell_mirror_y: false
+    # 0 = level.yaml control.rate_hz
+    rate_hz: 0.0
+    joint_states_topic: "/joint_states"
+    bolt_pose_topic: "/perception/bolt_pose"
+    arm_controller: "right_arm_controller"
+    hand_controller: "right_hand_controller"
+    arm_trajectory_topic: "/right_arm_controller/joint_trajectory"
+    hand_trajectory_topic: "/right_hand_controller/joint_trajectory"
+    # each tick's single point is this far ahead; the JTC splines to it
+    time_from_start_s: 0.06
+    dry_run: false
+    # refusals, same 0.5 s convention as genesis_motion_skills/config/defaults.yaml
+    state_stale_s: 0.5
+    perception_stale_s: 0.5
+    heartbeat_timeout_s: 0.5
+    # hand effort (the wujihandros2 driver's filtered drive current, A) that aborts
+    hand_effort_abort: 1.5
+    # Cartesian fence for the policy wrist frame, world (planning) frame, metres.
+    # Around the bin on the RIGHT side of the table (y < 0), 0.95..1.45 m high.
+    fence:
+      x_min: 0.25
+      x_max: 0.85
+      y_min: -0.55
+      y_max: 0.15
+      z_min: 0.95
+      z_max: 1.45
+    # the measured wrist may sit this far outside the fence before an abort
+    fence_margin: 0.02
+    # a wrist step still above the cap after scaling, as a multiple of the cap, aborts
+    step_cap_tolerance: 1.5
+    # first-order filter on the differenced wrist velocities (0 = none)
+    velocity_filter: 0.0
+    # finger velocity: difference (the hand driver reports none) or reported
+    finger_velocity: "difference"
+    # wrist velocity: jacobian (full-body J(q) times the reported joint velocities, the
+    # simulator's body velocity; the waist moves the wrist too) or difference (FK difference,
+    # lags by half a step: 55 % off at a sampled grasp step of the L39 recording)
+    wrist_velocity: "jacobian"
+    # N m per A of the hand driver's effort field, for levels that latch on finger torque
+    # (latch.mode torque, level 39+). 0 refuses to start such a level. Measure at bring-up.
+    effort_scale_nm_per_a: 0.0
+    # what the safety observation measures clearance to: workcell (workcell.json's table and bin, the
+    # real furniture) or training (the table and the bin level.yaml says the policy trained against:
+    # adam-rl's 26 x 26 x 4 cm virtual bin around the nominal rod, not workcell.json's 22 x 16 x 8 cm)
+    safety_scene: "training"
+    # a rod estimate leaning between these (deg) gets the rolled-wrist lift along its up-normal
+    # (adam-rl spawns leaning rods at 18, 30 and 40 deg); outside, the lift is along world z
+    tilt_roll_min_deg: 10.0
+    tilt_roll_max_deg: 60.0
+    world_frame: "world"
+    confirm_real_hardware: false

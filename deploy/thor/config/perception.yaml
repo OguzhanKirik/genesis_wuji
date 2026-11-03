@@ -1,0 +1,16 @@
+# Rod perception on the robot's head RealSense. The bin box and floor are measured in the robot's world frame at
+# bring-up (adam-moveit cell.yaml puts the table and bin there); these are the sim layout's numbers as a start.
+rod_perception:
+  ros__parameters:
+    depth_topic: /camera/camera/aligned_depth_to_color/image_raw
+    info_topic: /camera/camera/aligned_depth_to_color/camera_info
+    rgb_topic: /camera/camera/color/image_raw
+    camera_frame: ''
+    world_frame: world
+    segmenter: depth            # yolo once the model trained on the Replicator renders is in config/
+    yolo_model: /config/rods_seg.pt
+    bin_xy_min: [0.4374, -0.1899]
+    bin_xy_max: [0.6574, -0.0299]
+    bin_floor_z: 0.95
+    floor_margin_m: 0.006
+    max_rate_hz: 15.0

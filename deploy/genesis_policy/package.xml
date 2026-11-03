@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://relaxng.org/ns/structure/1.0"?>
+<package format="3">
+  <name>genesis_policy</name>
+  <version>0.1.0</version>
+  <description>
+    Runs the learned reach-to-grasp policy (right arm + Wuji Hand 2) on the
+    Adam-U through ros2_control: a sim-free runtime (observation assembly,
+    damped least-squares IK from the URDF with pinocchio, the scripted phase
+    machine) and one rclpy node that streams single-point JointTrajectory
+    messages to the right arm and right hand controllers at the policy rate,
+    behind a safety wrapper (fence, step cap, joint clamp, stale refusals,
+    dead-man, hand-effort abort). The actor is an ONNX file plus a YAML of
+    level constants handed over from adam-rl (handoff/policy/NAME/); nothing
+    here trains. See README.md for the handoff schema and the parameters.
+  </description>
+  <maintainer email="oguzhan@revelrobotics.com">Oguzhan</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <!-- the runtime: numpy + pinocchio (pip: pin) + onnxruntime, no ROS -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- the node -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_ros_py</exec_depend>
+  <exec_depend>xacro</exec_depend>  <!-- only without the vendored URDF -->
+  <exec_depend>ament_index_python</exec_depend>
+  <!-- the model (URDF), the controller joint order, the cell geometry -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
