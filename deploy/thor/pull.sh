@@ -9,6 +9,8 @@ if ! grep -q '"ghcr.io"' "${DOCKER_CONFIG:-$HOME/.docker}/config.json" 2>/dev/nu
   echo "not logged in to ghcr.io: run  echo <token> | docker login ghcr.io -u <github-user> --password-stdin" >&2
   exit 3
 fi
-echo "pulling adam-moveit:${ADAM_IMAGE_TAG}${ARCH_SUFFIX:-} and genesis-rl-deploy:${APP_TAG}${ARCH_SUFFIX:-} ..."
-docker compose pull
+# Optional service names (robot | app) limit the pull: `./pull.sh app` while the robot image is a native build
+# that the registry does not have (adam-moveit's arm64 release must include 8ad47ab, the lifting-column limits).
+echo "pulling adam-moveit:${ADAM_IMAGE_TAG}${ARCH_SUFFIX:-} and genesis-rl-deploy:${APP_TAG}${ARCH_SUFFIX:-} ${*:+(only: $*)}..."
+docker compose pull "$@"
 docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}  {{.CreatedSince}}' | grep -E 'adam-moveit|genesis-rl-deploy'
