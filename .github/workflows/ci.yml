@@ -3,7 +3,9 @@
 # ci.yml/release.yml: amd64 on GitHub's runner, arm64 (the Jetson Thor) when the repository variable
 # ARM64_RUNNER names a runner (ubuntu-24.04-arm or a self-hosted label). Images go to
 # ghcr.io/<owner>/genesis-rl-deploy:<tag>-<arch> plus a multi-arch manifest ghcr.io/<owner>/genesis-rl-deploy:<tag>.
-# ADAM_IMAGE_TAG (repository variable, default v0.4.0) picks the adam-moveit base image.
+# ADAM_IMAGE_TAG (repository variable, default v0.4.0) picks the adam-moveit base image. Pulling that private
+# base needs either the genesis_rl repository granted read access on the adam-moveit package, or the secrets
+# GHCR_PULL_USER / GHCR_PULL_TOKEN (a token with read:packages AND write:packages, since the same login pushes).
 name: CI
 
 on:
@@ -76,11 +78,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
+      # The base image (adam-moveit's package) is private and scoped to that repository, so this repository's
+      # GITHUB_TOKEN cannot pull it (403). Either grant the genesis_rl repository read access on the adam-moveit
+      # package (package settings -> Manage Actions access) and GITHUB_TOKEN works, or add the secret
+      # GHCR_PULL_TOKEN (a token with read:packages) and it is used for the pull; the push uses GITHUB_TOKEN.
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.GHCR_PULL_USER || github.actor }}
+          password: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
       - name: Free runner disk (the adam-moveit base is several GB)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
       - uses: docker/setup-buildx-action@v3
