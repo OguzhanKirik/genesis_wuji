@@ -414,6 +414,10 @@ pregrasp:
   - 0.075
   - 0.1
   wrist_roll: true
+  waist:
+    waistPitch: 1.05
+    waistRoll: 0.0
+    waistYaw: 0.0
 workspace:
   rod_xy_centre:
   - 0.5474
