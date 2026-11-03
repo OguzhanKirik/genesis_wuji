@@ -60,3 +60,33 @@ head camera depth + camera_info ──> masks (depth clusters | YOLO-seg) ──
   a marker-tracked rod on the bench).
 
 Host tests (numpy + scipy only): `cd deploy/genesis_perception && python -m pytest test -q`.
+
+## The sim rung on the bench (what was run on 2026-11-03)
+
+adam-moveit on `rod-selector` (needs 8ad47ab: lifting-column joint limits for the Wuji design, else the motion
+skills server dies on the first MoveTo; e700f44: `workcell_single_rg.json`, one rod at the trained window centre),
+its container on its own ROS domain (`SIM_ROS_DOMAIN_ID=42 ADAM_MODE=sim docker compose up -d adam_moveit`), then:
+
+```bash
+docker exec adam_moveit bash -lc 'ros2 launch genesis_cell sim.launch.py design:=genesis_wuji workcell_layout:=workcell_single_rg.json headless:=true rviz:=false'
+docker build -f deploy/Dockerfile --build-arg BASE_IMAGE=adam-moveit:latest -t genesis-rl-deploy:bench .
+docker run -d --name genesis_rl_app --network host --ipc host --gpus all -e ROS_DOMAIN_ID=42 \
+    -v ~/adam-moveit/ws:/root/ws:ro -v $PWD/handoff:/handoff:ro genesis-rl-deploy:bench sleep infinity
+E=/usr/local/bin/genesis_rl_entrypoint.sh          # docker exec bypasses the entrypoint: source the overlay through it
+docker exec -d adam_moveit bash -lc 'ros2 run genesis_isaac rod_candidates.py --ros-args -p topic:=/perception/rod_truth -p noise_xy_m:=0.0 -p noise_z_m:=0.0 -p noise_rot_deg:=0.0'
+docker exec -d genesis_rl_app $E bash -c 'ros2 run genesis_perception perception_node --ros-args -p bin_xy_min:="[0.35, -0.45]" -p bin_xy_max:="[0.75, 0.05]" -p bin_floor_z:=0.95'
+docker exec -d genesis_rl_app $E bash -c 'ros2 run genesis_policy selector_node.py --ros-args -p level_path:=/handoff/policy/L53b/level.yaml'
+printf "policy_node:\n  ros__parameters:\n    effort_scale_nm_per_a: 1.0\n" > /tmp/policy_sim.yaml   # the bridge passes torque through
+docker exec -d genesis_rl_app $E bash -c 'ros2 launch genesis_policy policy.launch.py policy_dir:=/handoff/policy/L53b params_file:=/tmp/policy_sim.yaml'
+docker exec genesis_rl_app $E bash -c 'ros2 run genesis_policy grasp_cycle.py --ros-args -p level_path:=/handoff/policy/L53b/level.yaml -p cycles:=1'
+```
+
+Verified: the depth back-projection equals Isaac's own point cloud and the table edges land on the layout
+(camera, intrinsics and TF agree); parity with the level-53b recording; MoveTo and Stop through the motion
+skills server; the selector accepts the rod at the window centre.
+
+Known: `/tmp/genesis_bolt_poses.json` (the truth stand-in) reports the rod prim's origin, which the asset puts at
+one END of the rod, and even corrected it sits a few cm from the rendered rod, so `compare_candidates` is not a
+valid gate until that is fixed on the adam-moveit side. A heap at the head camera's resolution (a rod is ~12 px
+wide) defeats the depth-cluster segmenter even with sequential fits: the bin needs the YOLO segmenter.
+
