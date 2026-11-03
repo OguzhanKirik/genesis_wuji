@@ -156,6 +156,7 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
           MATRIX: ${{ needs.prepare.outputs.matrix }}
         run: |
-          members=$(echo "$MATRIX" | python3 -c 'import json,sys,os; m=json.load(sys.stdin); print(" ".join(f"{os.environ[\"IMAGE\"]}:{os.environ[\"TAG\"]}-{i[\"arch\"]}" for i in m["include"]))')
+          members=$(echo "$MATRIX" | jq -r --arg img "$IMAGE" --arg tag "$TAG" '.include[] | "\($img):\($tag)-\(.arch)"' | xargs)
+          echo "members: $members"
           docker buildx imagetools create -t "$IMAGE:$TAG" $members
           docker buildx imagetools inspect "$IMAGE:$TAG"

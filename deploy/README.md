@@ -90,3 +90,18 @@ one END of the rod, and even corrected it sits a few cm from the rendered rod, s
 valid gate until that is fixed on the adam-moveit side. A heap at the head camera's resolution (a rod is ~12 px
 wide) defeats the depth-cluster segmenter even with sequential fits: the bin needs the YOLO segmenter.
 
+
+## CI images (`.github/workflows/ci.yml`)
+
+Tests on every push and pull request; images on tags `v*` and on manual dispatch, pushed to
+`ghcr.io/<owner>/genesis-rl-deploy:<tag>-<arch>` plus the multi-arch manifest `<tag>` (arm64 when the repository
+variable `ARM64_RUNNER` names a runner). The adam-moveit base comes from one of two places, decided per run:
+
+| what the repository holds | base image | needs |
+|---|---|---|
+| secret `ADAM_MOVEIT_DEPLOY_KEY` (a read-only deploy key on adam-moveit) + variable `ADAM_MOVEIT_REF` (a branch, a tag, or a FULL 40-character SHA; a short SHA is taken for a branch pattern and the checkout fails) | adam-moveit checked out at that ref and its `deploy` target built on the runner (`BASE_IMAGE=ubuntu:24.04`, the same recipe as adam-moveit's release and the Thor) | nothing else; ~20-30 min per architecture (set 2026-11-03, ref e700f44) |
+| secret `GHCR_PULL_TOKEN` (read:packages), or the genesis_rl repository granted read access on the adam-moveit package | `ghcr.io/<owner>/adam-moveit:<ADAM_IMAGE_TAG>` pulled | that access; adam-moveit's package is private and scoped to its own repository, so the plain `GITHUB_TOKEN` gets 403 |
+
+Pulling the published genesis-rl-deploy image onto the Thor still needs one `docker login ghcr.io` there with a
+token that has `read:packages`; until then `deploy/thor` runs the images built natively on the Thor
+(`~/build`, tags `e700f44` / `local` in its `.env`).
