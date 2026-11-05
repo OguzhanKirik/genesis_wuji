@@ -174,7 +174,7 @@ level = dict(
                   standoff_m=[float(lvl.standoff_lo), float(lvl.standoff_hi)],
                   wrist_roll=bool(lvl.wrist_roll),
                   # the torso pose the episode holds (WAIST_HELD); the orchestrator sets it before the pre-grasp
-                  waist={j: float(v) for j, v in G.WAIST_HELD.items()}),
+                  waist={j: float(v) for j, v in C('WAIST_HELD').items()}),
     # not read by the runtime: where the policy can pick (genesis_policy.selector reads it). A rod centre within
     # xy_core_m of rod_xy_centre on x and y with the hand yaw inside hand_yaw_core_rad, or within xy_edge_m with the
     # hand yaw anywhere in hand_yaw_rad; hand yaw = rod yaw + pinch, |pinch| <= pinch_angle_rad, the rod yaw measured

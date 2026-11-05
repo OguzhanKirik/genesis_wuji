@@ -70,6 +70,7 @@ measured wrist outside the fence aborts.
 |---|---|---|
 | joint state fresher than | `state_stale_s` (0.5, the `genesis_motion_skills` convention) | hold, stop |
 | rod pose fresher than | `perception_stale_s` (0.5) | hold, stop |
+| rod pose, once running | the tracker (below): a fit fresher than `perception_stale_s`, else the last pose for `rod_hold_s` (10.0), after the latch a pose riding on the wrist | hold, stop when the hold runs out before the latch |
 | heartbeat fresher than | `heartbeat_timeout_s` (0.5) | hold, stop |
 | enable service said true | `~/enable` | not started / hold |
 | every right-hand effort below | `hand_effort_abort` (A, the wujihandros2 driver's filtered current) | hold, stop |
@@ -113,6 +114,8 @@ JTC and the two cannot be active together).
 | `time_from_start_s` | 0.06 | the single point's time ahead of now |
 | `dry_run` | false | compute, log and publish `~/status` only |
 | `state_stale_s`, `perception_stale_s`, `heartbeat_timeout_s` | 0.5 | the refusals above |
+| `rod_hold_s` | 10.0 | how long the last fit is held without a fresh one before the latch (the fingers hide the rod for seconds while closing: 3 s aborted 2 of 3 sim episodes); after it the pose rides on the wrist |
+| `rod_left_radius_m` | 0.03 | a fresh fit this close to where the rod rested at the latch means the hand lifted empty: the fit is reported instead of the wrist-attached pose |
 | `hand_effort_abort` | 1.5 | A |
 | `fence.{x,y,z}_{min,max}` | a box around the right-side bin | world frame, metres |
 | `fence_margin` | 0.02 | how far outside the fence the measured wrist may sit |
@@ -295,7 +298,7 @@ with the same topic and type.
 |---|---|---|---|
 | `test_level.py` | this package, pytest | nothing | the stub parses; 15 malformed files are refused naming the key; a subset layout works |
 | `test_model.py` | pytest | xacro (or `GENESIS_POLICY_URDF`), pinocchio | wrist and fingertip FK equal an independent numpy walk of the URDF; the Jacobian equals finite differences, with and without a wrist offset; the right-arm limits are the URDF's; joint names map to the right slots |
-| `test_runtime.py` | pytest | the above | observation layout and values; hand targets land in the controller order; the IK follows translation and rotation commands and converges; the clip uses MoveIt's limits; the workspace clamp binds; the phase machine times out, lifts 10 cm and retries; the latch, a passing grip check and a successful hold; a failing grip check and the reopen; determinism; the tip source |
+| `test_runtime.py` | pytest | the above | observation layout and values; hand targets land in the controller order; the IK follows translation and rotation commands and converges; the clip uses MoveIt's limits; the workspace clamp binds; the phase machine times out, lifts 10 cm and retries; the latch, a passing grip check and a successful hold; a failing grip check and the reopen; determinism; the tip source; the rod tracker (measured, held, stale, attached to the wrist, left on the table, the retry) |
 | `test_parity.py` | pytest | `episode.npz` (the xacro URDF, with the world joint) | adam-rl's recorded actions (1e-4), observations (1e-3; the velocities 5e-3, PhysX's link velocities agree with J qdot to ~0.1 %; the safety vectors may flip on 0.5 % of steps where two obstacles tie) and first-substep joint targets (1e-4) are reproduced, episode by episode with the recorded seed, workspace centre, lift direction and scene (skips with the reason until the fixture exists) |
 | `test_selector.py` | pytest | nothing (parity: adam-rl `dump_fill_choices.py` + a level.yaml with `workspace`) | the highest exposed reachable rod wins; a covered rod, a steep one and one outside the window are passed over with the reason; standing rods count 15 mm lower; the yaw window's core and edge limits; a leaning rod's direction; parity: the rod adam-rl's level 52 chose, heap for heap (1024 / 1024 on 2026-10-16) |
 | `test_policy_node.py` | `genesis_integration_tests`, launch_testing | the loopback stack with the Wuji body (`test/wuji_hand_loopback.py` stands in for the hand driver) | real mode refuses without confirmation; `dry_run` steps and publishes nothing; the stream reaches both controllers at 30 Hz with their joint lists, the hand follows the targets through the plugins, the scripted lift raises the wrist, a lost heartbeat holds and stops |

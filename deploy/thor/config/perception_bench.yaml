@@ -1,0 +1,20 @@
+# Rod perception for the BENCH test with the ZED on a fixed mount (config/zed.yaml publishes world -> camera):
+# the world origin is on the table under the camera, z up, so the floor is z = 0 and the region a box around it.
+#   docker exec -d genesis_rl_app /usr/local/bin/genesis_rl_entrypoint.sh bash -c \
+#     "ros2 launch genesis_perception perception.launch.py params:=/config/perception_bench.yaml"
+rod_perception:
+  ros__parameters:
+    depth_topic: /camera/camera/aligned_depth_to_color/image_raw
+    info_topic: /camera/camera/aligned_depth_to_color/camera_info
+    rgb_topic: /camera/camera/color/image_raw
+    camera_frame: ''
+    world_frame: world
+    segmenter: depth
+    bin_xy_min: [-0.30, -0.30]
+    bin_xy_max: [0.30, 0.30]
+    bin_floor_z: 0.0
+    floor_margin_m: 0.008        # the ZED's depth noise at 0.7 m is a little above a RealSense's
+    inlier_tol_m: 0.003
+    max_residual_m: 0.002
+    min_pixels: 60
+    max_rate_hz: 15.0

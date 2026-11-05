@@ -33,12 +33,14 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from sensor_msgs.msg import JointState
 from std_msgs.msg import Empty, String
 from std_srvs.srv import SetBool, Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from genesis_policy import level as level_mod
 from genesis_policy import pregrasp
+from genesis_policy.model import RobotModel, urdf_string
 from genesis_policy.policy_node import controller_joints
 
 try:
@@ -60,7 +62,9 @@ class GraspCycle(Node):
                  move_timeout_s=60.0, selector_node='rod_selector', policy_node='policy_node',
                  bolt_pose_topic='/perception/bolt_pose', hand_trajectory_topic='/right_hand_controller/joint_trajectory',
                  hand_open_time_s=1.0, settle_after_move_s=0.5, waist_trajectory_topic='/waist_controller/joint_trajectory',
-                 waist_move_time_s=4.0, set_waist=True, move_retries=3, home_first=True)
+                 waist_move_time_s=4.0, set_waist=True, move_retries=3, home_first=True,
+                 arm_trajectory_topic='/right_arm_controller/joint_trajectory', lift_out_m=0.10, lift_out_time_s=2.0, lift_out_below_z=1.06, reached_tol_m=0.01, reached_tol_deg=5.0,
+                 staging_named_state='back')   # the only right_arm group state that keeps the hand off the table at the 1.05 rad bow
         for k, v in p.items():
             self.declare_parameter(k, v)
         self.p = {k: self.get_parameter(k).value for k in p}
@@ -81,6 +85,11 @@ class GraspCycle(Node):
         self.hand_joints = controller_joints(self.p['design'], 'right_hand_controller')
         self.waist_joints = controller_joints(self.p['design'], 'waist_controller')
         self.waist_pub = self.create_publisher(JointTrajectory, self.p['waist_trajectory_topic'], 10)
+        self.arm_pub = self.create_publisher(JointTrajectory, self.p['arm_trajectory_topic'], 10)
+        self.joints = {}
+        self.create_subscription(JointState, '/joint_states', self._on_joints, 10, callback_group=cb)
+        self.model = RobotModel(urdf_string(self.p['design']), self.level.arm_joints, self.level.wrist_link,
+                                self.level.wrist_offset)
         self._beat = False
         self.create_timer(0.1, self._tick_heartbeat, callback_group=cb)
         self.get_logger().info(f"level {self.level.source}; group {self.p['group']}, wrist {self.level.wrist_link}")
@@ -91,6 +100,9 @@ class GraspCycle(Node):
             self.choice = json.loads(msg.data)
         except ValueError:
             pass
+
+    def _on_joints(self, msg):
+        self.joints.update(zip(msg.name, msg.position))
 
     def _on_bolt(self, msg):
         self.bolt_pose = msg
@@ -133,13 +145,42 @@ class GraspCycle(Node):
         self._wait(res.done, timeout, f'{name} result')
         return res.result().result
 
-    def _move(self, goal, name):
+    def _wrist_error(self, position, quat_xyzw):
+        """(m, deg) between the measured wrist (FK of /joint_states) and a pose target, or None without joints.
+        The target names the wrist link; both the link and the policy's offset wrist point are tried."""
+        if not self.joints:
+            return None
+        self.model.forward(self.model.configuration(self.joints))
+        x, y, z, w = quat_xyzw
+        Rt = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                       [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                       [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+        best = None
+        for p_, R_ in (self.model.frame_pose(self.level.wrist_link), self.model.wrist()):
+            dp = float(np.linalg.norm(np.asarray(p_) - np.asarray(position)))
+            da = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(Rt.T @ R_) - 1.0) / 2.0))))
+            if best is None or dp < best[0]:
+                best = (dp, da)
+        return best
+
+    def _move(self, goal, name, target=None):
         """Send a MoveTo goal; an execution failure (EXEC_FAILED: a controller tripped its tolerance, in sim
-        usually the bridge stalling for a frame) is retried `move_retries` times after a Stop and a pause."""
+        usually the bridge stalling for a frame) is retried `move_retries` times after a Stop and a pause.
+        With a pose `target`, an execution failure with the wrist already there (within reached_tol_m and
+        reached_tol_deg) counts as reached: the Isaac bridge reports a loaded shoulder at ~0.08 rad/s while it
+        stands still (2026-11-05: wrist 2 mm from the pre-grasp, position drifting 0.001 rad/s), above the
+        trajectory controller's 0.05 stopped-velocity tolerance, so the controller aborts a move that arrived."""
         for attempt in range(1, int(self.p['move_retries']) + 2):
             r = self._action(self.move_to, goal, float(self.p['move_timeout_s']), name)
             if r.error_code == MoveTo.Result.OK:
                 return
+            if r.error_code == MoveTo.Result.EXEC_FAILED and target is not None:
+                time.sleep(0.3)
+                err = self._wrist_error(*target)
+                if err is not None and err[0] <= float(self.p['reached_tol_m']) and err[1] <= float(self.p['reached_tol_deg']):
+                    self.get_logger().warn(f'{name}: the controller aborted but the wrist is there '
+                                           f'({1000 * err[0]:.1f} mm, {err[1]:.1f} deg): taken as reached')
+                    return
             if r.error_code != MoveTo.Result.EXEC_FAILED or attempt > int(self.p['move_retries']):
                 raise CycleError(f'{name} failed: error_code {r.error_code}')
             self.get_logger().warn(f'{name}: execution failed (attempt {attempt}); stopping and retrying')
@@ -166,7 +207,7 @@ class GraspCycle(Node):
         goal.tip_link = self.level.wrist_link
         goal.velocity_scaling = float(self.p['velocity_scaling'])
         goal.planning_time = float(self.p['planning_time'])
-        self._move(goal, 'move_to(pre-grasp)')
+        self._move(goal, 'move_to(pre-grasp)', target=(position, quat_xyzw))
 
     def stop_group(self, group=None):
         goal = Stop.Goal()
@@ -186,14 +227,52 @@ class GraspCycle(Node):
         traj = JointTrajectory()
         traj.joint_names = list(self.hand_joints)
         pt = JointTrajectoryPoint()
+        # Fully open, the held fingers too: L53c+ hold ring and little in a fist (level hand_held), and MoveIt
+        # counts that fist as a start state in collision, so every planned move after the first episode failed
+        # (error 13). policy_node applies the held pose itself while an episode runs.
         open_map = dict(zip(self.level.hand_joints, self.level.hand_open))
-        open_map.update(self.level.hand_held)
         pt.positions = [float(open_map.get(j, 0.0)) for j in self.hand_joints]
         pt.time_from_start.sec = int(self.p['hand_open_time_s'])
         pt.time_from_start.nanosec = int((float(self.p['hand_open_time_s']) % 1) * 1e9)
         traj.points = [pt]
         self.hand_pub.publish(traj)
         time.sleep(float(self.p['hand_open_time_s']) + 0.2)
+
+    def lift_out(self):
+        """Raise the wrist lift_out_m straight up, straight to the arm controller (no planner), so the hand
+        leaves the bin before the planned move to the staging state. After an episode the hand sits among the
+        bin walls and the rod, which MoveIt counts as a start state in collision: it then refuses every plan
+        (error 13, "start tree has no valid states") and every later cycle fails."""
+        dz = float(self.p['lift_out_m'])
+        if dz <= 0.0 or not self.joints:
+            return
+        arm = list(self.level.arm_joints)
+        self.model.forward(self.model.configuration(self.joints))
+        z0 = float(self.model.wrist()[0][2])
+        if z0 >= float(self.p['lift_out_below_z']):
+            return                                              # already clear of the bin (pre-grasp is ~1.09-1.11 m)
+        lo, hi = self.model.limits(arm)
+        qa = np.array([self.joints.get(j, 0.0) for j in arm])
+        n = 20
+        step = np.array([0.0, 0.0, dz / n, 0.0, 0.0, 0.0])      # world z up, wrist orientation held
+        for _ in range(n):
+            q = self.model.configuration(dict(zip(arm, qa)) | {k: v for k, v in self.joints.items() if k not in arm})
+            self.model.forward(q)
+            J = self.model.wrist_jacobian(q)
+            dq = J.T @ np.linalg.solve(J @ J.T + 1e-4 * np.eye(6), step)
+            qa = np.clip(qa + dq, lo, hi)
+        traj = JointTrajectory()
+        traj.joint_names = arm
+        pt = JointTrajectoryPoint()
+        pt.positions = [float(v) for v in qa]
+        pt.velocities = [0.0] * len(arm)
+        t = float(self.p['lift_out_time_s'])
+        pt.time_from_start.sec = int(t)
+        pt.time_from_start.nanosec = int((t % 1) * 1e9)
+        traj.points = [pt]
+        self.arm_pub.publish(traj)
+        self.get_logger().info(f'lift out: wrist at z {z0:.3f} m, +{dz * 100:.0f} cm over {t:.1f} s (direct to the arm controller)')
+        time.sleep(t + 0.5)
 
     def set_waist(self):
         """The torso pose the policy trained with (level.yaml pregrasp.waist, adam-rl WAIST_HELD): the policy
@@ -217,7 +296,14 @@ class GraspCycle(Node):
     # ---- one cycle ---------------------------------------------------------------------
     def select_rod(self):
         self.choice, self.bolt_pose = None, None
-        r = self._call(self.select_cli, Trigger.Request())
+        # A moving heap is transient (rods settling after a drop, or the head camera still swinging after the torso
+        # bow, whose frames sit in the selector's settle window): wait it out, up to select_timeout_s.
+        deadline = time.monotonic() + float(self.p['select_timeout_s'])
+        while True:
+            r = self._call(self.select_cli, Trigger.Request())
+            if r.success or 'still moving' not in r.message or time.monotonic() > deadline:
+                break
+            time.sleep(0.5)
         if not r.success:
             raise CycleError(f'selector refused: {r.message}')
         self._wait(lambda: self.choice is not None and (self.choice.get('picked') is not None) and self.bolt_pose is not None,
@@ -254,7 +340,8 @@ class GraspCycle(Node):
             self.open_hand()
         else:
             self.open_hand()
-        self.move_named(self.p['home_named_state'])
+            self.lift_out()
+        self.move_named(self.p['staging_named_state'] or self.p['home_named_state'])
         return success
 
     def run(self):
@@ -262,10 +349,17 @@ class GraspCycle(Node):
         ok = fail = 0
         k = 0
         try:
+            time.sleep(1.0)                             # the first /joint_states for lift_out
+            self.lift_out()                             # a previous run may have left the hand in the bin
             if self.p['home_first']:
-                # skip in sim when the arm already rests at home: the cached zero-length home plan is aborted by
-                # the Isaac bridge's phantom joint velocity (shoulderPitch reads ~0.08 rad/s at rest, tolerance 0.05)
                 self.move_named(self.p['home_named_state'])
+            # Fold the arm BEFORE bowing the torso: with the arm hanging straight at home, the 1.05 rad bow drives
+            # the hand into the table. PhysX then reports the pressed shoulder at ~0.08 rad/s while it stands
+            # still, above the trajectory controller's 0.05 goal tolerance, and every later move aborts
+            # (2026-11-04; upright, the same joint reads 0.01). Between cycles the arm returns to the staging
+            # state for the same reason, never to straight-arm home while bowed.
+            if self.p['staging_named_state']:
+                self.move_named(self.p['staging_named_state'])
             if self.p['set_waist']:
                 self.set_waist()
             while n == 0 or k < n:
@@ -285,7 +379,9 @@ class GraspCycle(Node):
                         pass
                     self.stop_group()
                     time.sleep(1.0)                     # the stop's hold settles before the next goal, or it is PREEMPTED
-                    self.move_named(self.p['home_named_state'])
+                    self.open_hand()                    # the hand may be down in the bin: open it and climb out first
+                    self.lift_out()
+                    self.move_named(self.p['staging_named_state'] or self.p['home_named_state'])
                 self.get_logger().info(f'cycles {k}: {ok} picked, {fail} failed')
         finally:
             self._beat = False

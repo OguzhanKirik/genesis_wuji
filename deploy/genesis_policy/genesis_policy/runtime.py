@@ -109,6 +109,92 @@ def lift_dir_from_rod(rod: RodPose, roll_cap: float, tilt_min: float, tilt_max: 
     return math.cos(t) * np.array([0.0, 0.0, 1.0]) - math.sin(t) * u
 
 
+class RodTracker:
+    """The rod pose the runtime steps on, from a camera that loses the rod as soon as the hand covers it.
+
+    Training's estimate (adam-rl `_est_bolt`) was the true pose plus bias, noise, up to 4 steps of latency and
+    3 % dropped frames: it followed the rod under the fingers and through the lift, and the grip check, the
+    retry and the success test all read its height. A cylinder fit cannot see a rod inside a hand, so:
+
+      measured   a fit fresher than `fresh_s`, while the hand has not latched
+      held       no fresh fit, not latched: the last pose, for at most `hold_s` after the last fit (or the
+                 last retry); longer than that update() returns None and the node stops as on a stale pose
+      attached   latched: the pose rides on the wrist with the wrist-relative pose captured when the latch
+                 fired, so a lifted rod rises as the estimate did in training ...
+      left       ... unless a fresh fit still finds the rod within `left_radius_m` of where it rested when
+                 the latch fired: the hand closed beside it or lifted empty, the fit is reported, its height
+                 does not rise, and the grip check and the retry fire as trained
+
+    A retry (the latch cleared) goes back to measured / held, from the last 'left' fit of that latch if there
+    was one (the rod is on the table there), else from the attached pose."""
+
+    def __init__(self, fresh_s: float, hold_s: float, left_radius_m: float):
+        self.fresh_s, self.hold_s, self.left_radius_m = float(fresh_s), float(hold_s), float(left_radius_m)
+        self.reset()
+
+    def reset(self):
+        self.pose: Optional[RodPose] = None
+        self.source = 'none'
+        self.rel = None             # (position, rotation) of the rod in the wrist frame, captured at the latch
+        self.rest = None            # where the rod rested when the latch fired
+        self.left = None            # the last fit that found the rod still on the table during this latch
+        self.hold_from = -math.inf  # the held pose's age counts from here
+        self.table = None           # (time, RodPose): the latest candidate near the rest spot, from every visible rod
+        self.clear_frames = 0       # candidate frames since the latch with no rod near the rest spot
+
+    def observe_candidates(self, poses, t: float, table_radius_m: float = 0.12, table_rise_m: float = 0.02):
+        """Every rod perception sees (not only the selector's choice, which can lose a nudged rod). While latched: a
+        rod still at table height within `table_radius_m` of where ours rested is ours, left behind (the fingers
+        can push it several cm: 47 mm seen in sim); a frame without one is evidence that it was lifted (or that the
+        hand hides the spot: see the README)."""
+        if self.rest is None:
+            return
+        def gap(p):
+            q = np.asarray(p.position, float)
+            return float(np.linalg.norm(q[:2] - self.rest[:2])), float(q[2] - self.rest[2])
+        on_table = [p for p in poses if gap(p)[0] <= table_radius_m and gap(p)[1] < table_rise_m]
+        if on_table:
+            self.table = (float(t), min(on_table, key=lambda p: gap(p)[0]))
+        else:
+            self.clear_frames += 1
+
+    def update(self, meas: Optional[RodPose], meas_time: float, t: float, wrist_p, wrist_R, latched: bool):
+        """The pose to step on at time t, or None. `meas` is the latest fit, received at `meas_time`."""
+        fresh = meas is not None and (float(t) - float(meas_time)) <= self.fresh_s
+        if latched:
+            if self.rel is None:
+                if self.pose is None:
+                    return None
+                self.rest = np.array(self.pose.position, float).copy()
+                self.rel = (wrist_R.T @ (self.pose.position - wrist_p), wrist_R.T @ self.pose.rotation)
+                self.table, self.clear_frames = None, 0
+            table = self.table[1] if self.table is not None and float(t) - self.table[0] <= self.fresh_s else None
+            if fresh and float(np.linalg.norm(np.asarray(meas.position, float) - self.rest)) <= self.left_radius_m:
+                table = meas
+            if table is not None:
+                self.pose, self.source = table, 'left'
+                self.left = table
+            else:
+                self.pose = RodPose(wrist_p + wrist_R @ self.rel[0], wrist_R @ self.rel[1])
+                self.source = 'attached'
+            return self.pose
+        if self.rel is not None:        # a retry: the latch cleared
+            if self.left is not None:
+                self.pose = self.left
+            self.rel, self.rest, self.left = None, None, None
+            self.table, self.clear_frames = None, 0
+            self.hold_from = float(t)
+        if fresh:
+            self.pose, self.source = meas, 'measured'
+            self.hold_from = float(meas_time)
+            return self.pose
+        if self.pose is None or float(t) - self.hold_from > self.hold_s:
+            self.source = 'stale'
+            return None
+        self.source = 'held'
+        return self.pose
+
+
 class Runtime:
     def __init__(self, level: Level, model: RobotModel, obstacles: Sequence[Box], table_top: float,
                  actor: Actor, hand_joint_order: Sequence[str],
@@ -391,6 +477,10 @@ class Runtime:
             est_v = (pos - self.est_win[w - 1]) * (self.level.rate_hz / w)
         self.est_win = np.vstack([pos[None], self.est_win[:-1]])
         settled = float(np.linalg.norm(est_v - self.v_lin)) < lt.rel_vel_max_m_s
+        # why the latch does or does not fire, for the node's status (the hardware has no other view of it)
+        self.latch_diag = dict(tau_nm=[round(float(v), 3) for v in tau], stable=bool(stable), gripping=bool(gripping),
+                               inside=bool(inside), tip_dist_mm=[round(1000 * float(v), 1) for v in d],
+                               settled=bool(settled))                      # plain bools: the node serialises this
         return stable and gripping and inside and settled
 
     def _update(self, k, rod, tips):
@@ -599,6 +689,8 @@ class Runtime:
 
         info = {
             'step': k, 'phase': PHASE_NAMES[phase], 'live': bool(live), 'latched': self.latched,
+            'latch': getattr(self, 'latch_diag', None),
+            'reseed': bool(latched_now or retry_now),
             'latched_now': latched_now, 'retry_now': retry_now, 'attempts': self.attempts,
             'grasp_end': int(self.grasp_end), 'done': self.done, 'success': self.success,
             'grip_fired': self.grip_fired, 'closure': self.closure.copy(), 'action': a.copy(),

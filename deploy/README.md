@@ -46,8 +46,13 @@ head camera depth + camera_info ──> masks (depth clusters | YOLO-seg) ──
                                        TF world <- camera optical frame (hand-eye calibration, assumed done)
 ```
 
-- The rod is a cylinder, radius 12.5 mm, length 35 mm, axis = local z (adam-rl `BOLT_RADIUS`, `BOLT_HALF_LEN`).
-  The fit uses the radius as a constraint, so the top half of the surface is enough.
+- The rod is NOT the 12.5 mm cylinder of adam-rl's collision proxy (`BOLT_RADIUS`): the asset is a threaded rod
+  35 mm long, thread radius ~8 mm, with a hex nut 11 mm thick at its middle (22.0 mm across the flats, 25.4 across
+  the corners). The known-radius cylinder fit still finds the position (~3 mm) but its axis comes out 15-28 deg off.
+  A rod lying on a surface therefore gets its pose from `rod_fit.refine_pose`, which fits that real shape
+  (`rod_top_height`): 0.6-1.1 mm and 0.3-1.6 deg against the simulator's truth (2026-11-04, `compare_candidates`,
+  4 drops). Leaning and standing rods keep the cylinder fit and are not validated yet. `refine_axis:=false` turns
+  the shape fit off; it costs the node about half its rate (7 -> 3-4 Hz on the bench).
 - Output orientation: z along the axis with the raised end up, x horizontal, as `genesis_policy.selector` expects.
 - Stateless: an occluded rod drops out of the list; the selector latches on its choice and the policy node holds
   the last pose, which is what the policy trained with (`_PERC7`: 2 % dropout, 1-2 steps latency).
@@ -77,6 +82,9 @@ docker exec -d adam_moveit bash -lc 'ros2 run genesis_isaac rod_candidates.py --
 docker exec -d genesis_rl_app $E bash -c 'ros2 run genesis_perception perception_node --ros-args -p bin_xy_min:="[0.35, -0.45]" -p bin_xy_max:="[0.75, 0.05]" -p bin_floor_z:=0.95'
 docker exec -d genesis_rl_app $E bash -c 'ros2 run genesis_policy selector_node.py --ros-args -p level_path:=/handoff/policy/L53b/level.yaml'
 printf "policy_node:\n  ros__parameters:\n    effort_scale_nm_per_a: 1.0\n" > /tmp/policy_sim.yaml   # the bridge passes torque through
+# The camera loses the rod once the hand covers it; policy_node tracks it (runtime.RodTracker: fit -> held for
+# rod_hold_s -> riding on the wrist after the latch, unless a fresh fit shows the rod left on the table). No
+# perception_stale_s override is needed for that.
 docker exec -d genesis_rl_app $E bash -c 'ros2 launch genesis_policy policy.launch.py policy_dir:=/handoff/policy/L53b params_file:=/tmp/policy_sim.yaml'
 docker exec genesis_rl_app $E bash -c 'ros2 run genesis_policy grasp_cycle.py --ros-args -p level_path:=/handoff/policy/L53b/level.yaml -p cycles:=1'
 ```

@@ -16,6 +16,7 @@ local z along the axis with its raised end up, local x horizontal.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -23,6 +24,14 @@ import numpy as np
 
 ROD_RADIUS = 0.0125     # m
 ROD_HALF_LEN = 0.0175   # m
+# The rod as the asset models it (rod-with-threads-0001, measured from its mesh 2026-11-04): a threaded rod 35 mm long,
+# thread radius 7.5-8.3 mm, with a hex nut 11 mm thick at its middle, 22.0 mm across the flats, 25.4 across the corners.
+# Lying on a surface it rests on a nut flat, its axis 11.0 mm up. ROD_RADIUS above is the training's collision proxy,
+# not this shape; refine_pose fits the shape.
+ROD_THREAD_RADIUS = 0.0080
+ROD_NUT_FLAT = 0.0110        # m, axis to a flat
+ROD_NUT_CORNER = 0.0127      # m, axis to a corner
+ROD_NUT_HALF = 0.0055        # m, half the nut's thickness
 
 
 @dataclass(frozen=True)
@@ -295,3 +304,82 @@ def fit_cylinders_sequential(pts: np.ndarray, nrm: np.ndarray, radius: float = R
         keep &= ~taken
     return out
 
+
+
+def rod_top_height(s_along, x_across):
+    """Height of the top surface above the axis of the rod lying on a nut flat, at (along, across) from its centre;
+    -inf off its footprint. The thread is a cylinder, the nut a hex with a flat on top."""
+    s_along, x_across = np.asarray(s_along, float), np.asarray(x_across, float)
+    ax = np.abs(x_across)
+    arm = np.where((np.abs(s_along) <= ROD_HALF_LEN) & (ax < ROD_THREAD_RADIUS),
+                   np.sqrt(np.clip(ROD_THREAD_RADIUS ** 2 - x_across ** 2, 0.0, None)), -np.inf)
+    half_side = ROD_NUT_CORNER / 2
+    nut_h = np.where(ax <= half_side, ROD_NUT_FLAT, ROD_NUT_FLAT * (ROD_NUT_CORNER - ax) / half_side)
+    nut = np.where((np.abs(s_along) <= ROD_NUT_HALF) & (ax < ROD_NUT_CORNER), nut_h, -np.inf)
+    return np.maximum(arm, nut)
+
+
+def fit_lying_rod(P_world: np.ndarray, yaw0: float):
+    """The lying rod's centre (world) and yaw by fitting its shape (rod_top_height) to its points: unknowns x, y, yaw
+    and the axis height. Points off the footprint cost their distance to it, so the thread's two ends fix the yaw;
+    points below the top surface (the near faces of the nut seen obliquely) cost little. Starts from `yaw0` and the
+    three yaws 45 / 90 deg from it, keeps the best. Returns (centre, yaw, rms residual)."""
+    from scipy.optimize import least_squares
+    m = P_world.mean(axis=0)
+
+    def resid(p):
+        x0, y0, yaw, z0 = p
+        d = np.array([math.cos(yaw), math.sin(yaw)])
+        u = np.array([-d[1], d[0]])
+        q = P_world[:, :2] - [x0, y0]
+        s, x = q @ d, q @ u
+        h = rod_top_height(s, x)
+        on = np.isfinite(h)
+        r = np.where(on, P_world[:, 2] - z0 - np.where(on, h, 0.0), 0.0)
+        w = np.where(np.abs(s) <= ROD_NUT_HALF, ROD_NUT_CORNER, ROD_THREAD_RADIUS)
+        off = np.hypot(np.maximum(np.abs(s) - ROD_HALF_LEN, 0.0), np.maximum(np.abs(x) - w, 0.0))
+        r = r + np.where(on, 0.0, 3.0 * np.maximum(off, 0.002))
+        return np.where(r < 0.0, 0.3 * r, r)
+    best = None
+    for dy in (0.0, math.pi / 2, math.pi / 4, -math.pi / 4):
+        r = least_squares(resid, [m[0], m[1], yaw0 + dy, m[2] - 0.009], loss='soft_l1', f_scale=0.001)
+        if best is None or r.cost < best.cost:
+            best = r
+    x0, y0, yaw, z0 = best.x
+    return np.array([x0, y0, z0]), float(yaw), float(np.sqrt(np.mean(best.fun ** 2)))
+
+
+def refine_pose(pts_cam: np.ndarray, centre_cam: np.ndarray, axis_cam: np.ndarray, T_world_cam: np.ndarray,
+                flat_snap_deg: float = 8.0, max_rms_m: float = 0.002):
+    """The pose of a LYING rod from its shape. Returns (centre_cam, axis_cam, info); the cylinder fit's pose unchanged
+    (info['refined'] False) for a rod that is not lying or whose shape fit is poor.
+
+    The known-radius cylinder fit finds the position (3 mm) but not the axis of this rod: it is a thin threaded rod
+    with a fat hex nut in the middle, not a 12.5 mm cylinder, and the fit settles 15-28 deg off on a lying rod in the
+    Isaac bench (2026-11-04, 24 frames against the simulator's truth). Fitting the rod's real shape gives 0.8 mm and
+    0.4 deg on the same frames. Lying = the points' principal direction within `flat_snap_deg` of horizontal; the
+    points are those within reach of the cylinder fit's centre. Leaning and standing rods keep the cylinder fit
+    (not validated against truth yet)."""
+    R, t = T_world_cam[:3, :3], T_world_cam[:3, 3]
+    W = pts_cam @ R.T + t
+    cw = R @ centre_cam + t
+    P = W[np.linalg.norm(W - cw, axis=1) < math.hypot(ROD_HALF_LEN, ROD_NUT_CORNER) + 0.004]
+    info = dict(refined=False, n=int(len(P)))
+    if len(P) < 30:
+        return centre_cam, axis_cam, info
+    C = P - P.mean(axis=0)
+    w, V = np.linalg.eigh(C.T @ C)
+    a3 = V[:, 2]
+    elev = math.degrees(math.asin(min(1.0, abs(float(a3[2])))))
+    info['pca_elev_deg'] = round(elev, 1)
+    if elev >= flat_snap_deg:
+        return centre_cam, axis_cam, info
+    xy = C[:, :2]
+    w2, V2 = np.linalg.eigh(xy.T @ xy)
+    c, yaw, rms = fit_lying_rod(P, math.atan2(V2[1, 1], V2[0, 1]))
+    info['rms_mm'] = round(1000 * rms, 2)
+    if not np.isfinite(rms) or rms > max_rms_m:
+        return centre_cam, axis_cam, info
+    a = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+    info['refined'] = True
+    return R.T @ (c - t), R.T @ a, info

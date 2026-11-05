@@ -119,3 +119,48 @@ def test_coarse_head_camera_resolution(axis):
     assert fit.ok, fit
     assert np.linalg.norm(fit.centre - centre) < 0.005, fit
     assert _axis_err_deg(fit.axis, axis) < 5.0, fit
+
+
+def _lying_rod_points(yaw, centre, rng, n=1000, noise=0.0005):
+    """The bench rod (thread + hex nut, rod_top_height) lying on a nut flat, seen from above: top-view points
+    sampled evenly as a downward camera's pixels are, cut 6 mm above the floor as the segmenter does."""
+    from genesis_perception.rod_fit import ROD_HALF_LEN, ROD_NUT_CORNER, ROD_NUT_FLAT, rod_top_height
+    s = rng.uniform(-ROD_HALF_LEN, ROD_HALF_LEN, 6 * n)
+    x = rng.uniform(-ROD_NUT_CORNER, ROD_NUT_CORNER, 6 * n)
+    h = rod_top_height(s, x)
+    keep = np.isfinite(h) & (h > -ROD_NUT_FLAT + 0.006)
+    s, x, h = s[keep][:n], x[keep][:n], h[keep][:n]
+    d = np.array([np.cos(yaw), np.sin(yaw), 0.0])
+    across = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
+    pts = centre + np.outer(s, d) + np.outer(x, across) + np.outer(h, [0.0, 0.0, 1.0])
+    return pts + rng.normal(0.0, noise, pts.shape)
+
+
+def test_refine_pose_lying_rod():
+    """A lying rod's pose from its shape: horizontal, yaw within 2 deg, centre within 1.5 mm, from a cylinder-fit start
+    21 deg off and a few mm away (what the known-radius fit gives on this rod)."""
+    from genesis_perception.rod_fit import ROD_NUT_FLAT, refine_pose
+    rng = np.random.default_rng(3)
+    for yaw_deg in (0.0, 19.0, 52.5, 76.0, 140.0, 171.0):
+        yaw = np.radians(yaw_deg)
+        centre = np.array([0.55, -0.10, 0.95 + ROD_NUT_FLAT])
+        pts = _lying_rod_points(yaw, centre, rng)
+        wrong = np.array([np.cos(yaw + 0.37), np.sin(yaw + 0.37), 0.09])
+        c, a, info = refine_pose(pts, centre + [0.002, -0.001, -0.003], wrong / np.linalg.norm(wrong), np.eye(4))
+        assert info['refined'], info
+        assert abs(a[2]) < 1e-9
+        err = np.degrees(np.arccos(min(1.0, abs(a @ [np.cos(yaw), np.sin(yaw), 0.0]))))
+        assert err < 2.0, (yaw_deg, err)      # 0.1-1.2 deg seen; the policy budget is 3
+        assert np.linalg.norm(c - centre) < 0.0015, (yaw_deg, c - centre)
+
+
+def test_refine_pose_keeps_fit_when_not_lying():
+    """A rod whose points rise steeply (leaning or standing) keeps the cylinder fit's pose."""
+    from genesis_perception.rod_fit import refine_pose
+    rng = np.random.default_rng(4)
+    s = rng.uniform(-0.0175, 0.0175, 800)
+    a_true = np.array([np.cos(np.radians(40)), 0.0, np.sin(np.radians(40))])
+    pts = np.array([0.5, -0.1, 0.97]) + np.outer(s, a_true) + rng.normal(0, 0.003, (800, 3))
+    c0, a0 = np.array([0.5, -0.1, 0.97]), a_true
+    c, a, info = refine_pose(pts, c0, a0, np.eye(4))
+    assert not info['refined'] and np.allclose(c, c0) and np.allclose(a, a0)

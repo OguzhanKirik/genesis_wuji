@@ -7,10 +7,12 @@ Subscribes `candidates_topic` (geometry_msgs/PoseArray in `world_frame`: every v
 orientation's z). On `~/select` (std_srvs/Trigger), or when no rod is chosen yet and `auto_select` is on, it runs
 genesis_policy.selector (the highest exposed reachable rod; adam-rl level 52 trains on the same choice) and from then
 on publishes that rod's latest pose on `bolt_pose_topic` (geometry_msgs/PoseStamped, what policy_node reads),
-following it from frame to frame as the nearest candidate within `track_radius_m`. The choice is kept until the next
-`~/select`: the policy's episode needs one target. Nothing is chosen while the heap moves (every rod within
-`settle_tol_m` of where it was `settle_window_s` ago). If the chosen rod is lost, publishing stops (the policy holds on
-a stale pose), `~/choice` says so, and nothing is chosen automatically again until `~/select`. `~/choice` (std_msgs/String, JSON): the pick, its kind, height, a reachable hand
+following it from frame to frame as the nearest candidate within `track_radius_m`, a radius that grows by
+`track_speed_m_s` for every second the rod goes unseen (up to `track_radius_max_m`): the hand hides the rod and
+nudges it while closing. The choice is kept until the next `~/select`: the policy's episode needs one target.
+Nothing is chosen while the heap moves (every rod within `settle_tol_m` of where it was `settle_window_s` ago).
+While the rod is unseen nothing is published (the policy node holds its last pose); only after `lost_after_s`
+without a match is it lost: `~/choice` says so, and nothing is chosen automatically again until `~/select`. `~/choice` (std_msgs/String, JSON): the pick, its kind, height, a reachable hand
 yaw, and per candidate why it was passed over.
 """
 import collections
@@ -37,6 +39,9 @@ class SelectorNode(Node):
             'bolt_pose_topic': '/perception/bolt_pose',
             'world_frame': 'world',
             'track_radius_m': 0.02,
+            'track_speed_m_s': 0.10,        # how fast an unseen rod may have moved (pushed by the fingers)
+            'track_radius_max_m': 0.06,
+            'lost_after_s': 15.0,           # longer than a grasp attempt with its retries
             'auto_select': True,
             'settle_window_s': 1.0,
             'settle_tol_m': 0.015,          # above the camera noise (2 mm per axis, two frames, 60 rods)
@@ -49,6 +54,10 @@ class SelectorNode(Node):
         self.ws = S.Workspace.from_level(level_mod.load(p['level_path']))
         self.world_frame = p['world_frame']
         self.track_radius = float(p['track_radius_m'])
+        self.track_speed = float(p['track_speed_m_s'])
+        self.track_radius_max = float(p['track_radius_max_m'])
+        self.lost_after = float(p['lost_after_s'])
+        self.seen_at = 0.0                     # when the chosen rod was last matched
         self.auto = bool(p['auto_select'])
         self.settle_window = float(p['settle_window_s'])
         self.settle_tol = float(p['settle_tol_m'])
@@ -89,6 +98,7 @@ class SelectorNode(Node):
             self._report(dict(picked=None, reasons=list(c.reasons)))
             return False, f'no pickable rod among {len(pos)}' + (f': {", ".join(sorted(set(c.reasons)))}' if c.reasons else '')
         self.chosen = pos[c.index].copy()
+        self.seen_at = time.monotonic()
         self.lost = False
         self._report(dict(picked=int(c.index), kind=S.KIND_NAMES[c.kind], height_m=round(c.height, 4),
                           hand_yaw_rad=round(c.hand_yaw, 4), reasons=list(c.reasons)))
@@ -117,16 +127,21 @@ class SelectorNode(Node):
                 self.get_logger().info(f'auto select: {why}')
             if self.chosen is None:
                 return
-        # follow the chosen rod: the nearest candidate, if it is close enough to be the same rod
+        # follow the chosen rod: the nearest candidate, if it is close enough to be the same rod. An unseen rod may
+        # have been pushed, so the radius grows with the time since it was last matched.
+        unseen = now - self.seen_at
+        radius = min(self.track_radius + self.track_speed * unseen, self.track_radius_max)
         d = np.linalg.norm(pos - self.chosen, axis=1) if len(pos) else np.array([])
-        if not len(d) or d.min() > self.track_radius:
-            why = f'nearest candidate {1000 * d.min():.0f} mm away' if len(d) else 'no candidates'
-            self.get_logger().warn(f'chosen rod lost ({why}); call ~/select to choose again')
-            self._report(dict(picked=None, lost=why))
-            self.chosen, self.lost = None, True
+        if not len(d) or d.min() > radius:
+            if unseen > self.lost_after:
+                why = f'nearest candidate {1000 * d.min():.0f} mm away' if len(d) else 'no candidates'
+                self.get_logger().warn(f'chosen rod lost for {unseen:.1f} s ({why}); call ~/select to choose again')
+                self._report(dict(picked=None, lost=why))
+                self.chosen, self.lost = None, True
             return
         i = int(d.argmin())
         self.chosen = pos[i].copy()
+        self.seen_at = now
         out = PoseStamped()
         out.header.stamp = msg.header.stamp
         out.header.frame_id = self.world_frame

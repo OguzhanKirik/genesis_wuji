@@ -10,7 +10,7 @@ from genesis_policy.actor import ScriptedActor, ZeroActor
 from genesis_policy.cell import load_workcell
 from genesis_policy.level import Box
 from genesis_policy.runtime import (PHASE_DONE, PHASE_GRASP, PHASE_HOLD, PHASE_LIFT, PHASE_PRELIFT,
-                                    PHASE_SETTLE, JointStates, RodPose, Runtime, clearance)
+                                    PHASE_SETTLE, JointStates, RodPose, RodTracker, Runtime, clearance)
 
 HAND_ORDER = [  # right_hand_controller order (ros2_controllers_genesis_wuji.yaml)
     'r_thumb_cmc_flex', 'r_thumb_cmc_abd', 'r_thumb_mcp', 'r_thumb_ip',
@@ -349,3 +349,96 @@ def test_lift_dir_from_rod():
         t = math.radians(tilt_deg)
         R = so3.rpy(0.0, math.pi / 2 - t, 0.0)
         assert np.allclose(lift_dir_from_rod(RodPose(np.zeros(3), R), math.pi / 2, lo, hi), [0.0, 0.0, 1.0])
+
+
+def _rod(x, y, z):
+    return RodPose(np.array([x, y, z], float), np.eye(3))
+
+
+def test_rod_tracker_measured_held_stale():
+    """A fresh fit is used as is; without one the last pose holds for hold_s, then the tracker gives up."""
+    tr = RodTracker(fresh_s=0.5, hold_s=3.0, left_radius_m=0.03)
+    I, w = np.eye(3), np.zeros(3)
+    assert tr.update(None, -1.0, 0.0, w, I, False) is None and tr.source == 'stale'
+    m = _rod(0.5, -0.1, 0.96)
+    assert tr.update(m, 0.0, 0.1, w, I, False) is m and tr.source == 'measured'
+    out = tr.update(m, 0.0, 1.0, w, I, False)                     # the fit is 1 s old: held, the same pose
+    assert out is m and tr.source == 'held'
+    assert tr.update(m, 0.0, 3.0, w, I, False) is m and tr.source == 'held'
+    assert tr.update(m, 0.0, 3.1, w, I, False) is None and tr.source == 'stale'
+    m2 = _rod(0.5, -0.1, 0.96)
+    assert tr.update(m2, 4.0, 4.1, w, I, False) is m2 and tr.source == 'measured'
+
+
+def test_rod_tracker_attached_rides_on_the_wrist():
+    """After the latch the pose follows the wrist with the relative pose captured at the latch, through a
+    translation and a rotation, with or without fresh fits away from the rest spot."""
+    tr = RodTracker(0.5, 3.0, 0.03)
+    I = np.eye(3)
+    m = _rod(0.5, -0.1, 0.96)
+    wp = np.array([0.45, -0.2, 1.05])
+    tr.update(m, 0.0, 0.1, wp, I, False)
+    out = tr.update(m, 0.0, 1.0, wp, I, True)                      # the latch step: still the rest pose
+    assert tr.source == 'attached' and np.allclose(out.position, m.position)
+    rise = np.array([0.0, 0.0, 0.08])
+    out = tr.update(None, 0.0, 2.0, wp + rise, I, True)             # the fit is gone, the wrist lifted 8 cm
+    assert tr.source == 'attached' and np.allclose(out.position, m.position + rise)
+    R = so3.rpy(0.0, 0.0, 0.3)
+    out = tr.update(None, 0.0, 2.5, wp + rise, R, True)             # a yaw about the wrist carries the rod round
+    assert np.allclose(out.position, wp + rise + R @ (m.position - wp)) and np.allclose(out.rotation, R)
+    lifted_fit = _rod(0.5, -0.1, 1.04)                             # a fit of the rod in the raised hand: not 'left'
+    out = tr.update(lifted_fit, 3.0, 3.0, wp + rise, I, True)
+    assert tr.source == 'attached' and np.allclose(out.position, m.position + rise)
+
+
+def test_rod_tracker_left_on_the_table_and_retry():
+    """A fresh fit near the rest spot while latched means the rod stayed on the table: the fit is reported (its
+    height does not rise, so the grip check fires as trained). A retry returns to measured / held."""
+    tr = RodTracker(0.5, 3.0, 0.03)
+    I = np.eye(3)
+    m = _rod(0.5, -0.1, 0.96)
+    wp = np.array([0.45, -0.2, 1.05])
+    tr.update(m, 0.0, 0.1, wp, I, False)
+    tr.update(None, 0.0, 1.0, wp, I, True)
+    nudged = _rod(0.515, -0.09, 0.96)                               # pushed 1.8 cm, still on the table
+    out = tr.update(nudged, 2.0, 2.0, wp + [0, 0, 0.05], I, True)
+    assert out is nudged and tr.source == 'left'
+    out = tr.update(nudged, 2.0, 2.6, wp + [0, 0, 0.06], I, True)   # the fit aged past fresh_s: back on the wrist
+    assert tr.source == 'attached' and np.allclose(out.position, m.position + [0, 0, 0.06])
+    out = tr.update(nudged, 2.0, 2.8, wp, I, False)                 # the retry: hold where the rod was last seen
+    assert tr.source == 'held' and tr.rel is None and out is nudged
+    assert tr.update(nudged, 2.0, 5.7, wp, I, False) is not None     # hold_s counts from the retry (2.8 + 3.0)
+    assert tr.update(nudged, 2.0, 5.9, wp, I, False) is None
+    fresh = _rod(0.52, -0.09, 0.96)
+    assert tr.update(fresh, 6.0, 6.0, wp, I, False) is fresh and tr.source == 'measured'
+    tr.reset()
+    assert tr.pose is None and tr.source == 'none'
+
+
+def test_rod_tracker_candidates_show_rod_left_and_lift():
+    """Every visible rod, not only the selector's choice: a candidate near the rest spot while latched means the rod
+    stayed on the table (reported, not lifted); candidate frames without one count as evidence of a lift."""
+    tr = RodTracker(0.5, 10.0, 0.03)
+    I = np.eye(3)
+    m = _rod(0.5, -0.1, 0.96)
+    wp = np.array([0.45, -0.2, 1.05])
+    tr.update(m, 0.0, 0.1, wp, I, False)
+    tr.observe_candidates([m], 0.2)                                  # not latched: ignored
+    assert tr.table is None and tr.clear_frames == 0
+    tr.update(None, 0.0, 1.0, wp, I, True)                            # the latch
+    pushed = _rod(0.52, -0.09, 0.96)                                  # nudged 2.2 cm, still on the table
+    tr.observe_candidates([_rod(0.2, 0.3, 0.96), pushed], 1.5)        # another rod far away, and ours
+    out = tr.update(None, 0.0, 1.6, wp + [0, 0, 0.05], I, True)       # the selector published nothing
+    assert out is pushed and tr.source == 'left' and tr.clear_frames == 0
+    far = _rod(0.545, -0.1, 0.96)                                     # pushed 4.5 cm: still on the table, still ours
+    tr.observe_candidates([far], 2.0)
+    out = tr.update(None, 0.0, 2.1, wp + [0, 0, 0.06], I, True)
+    assert out is far and tr.source == 'left' and tr.clear_frames == 0
+    lifted = _rod(0.5, -0.1, 1.04)                                    # a rod 8 cm up (in the hand) is not on the table
+    for k in range(3):                                                # no rod on the table near the spot, three frames
+        tr.observe_candidates([_rod(0.2, 0.3, 0.96), lifted], 3.0 + 0.1 * k)
+    assert tr.clear_frames == 3
+    out = tr.update(None, 0.0, 3.5, wp + [0, 0, 0.08], I, True)       # the 'left' fits aged out: on the wrist
+    assert tr.source == 'attached' and np.allclose(out.position, m.position + [0, 0, 0.08])
+    tr.update(None, 0.0, 4.0, wp, I, False)                           # a retry clears the evidence
+    assert tr.clear_frames == 0 and tr.table is None

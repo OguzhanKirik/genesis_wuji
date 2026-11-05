@@ -25,7 +25,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 import tf2_ros
 
-from .rod_fit import ROD_HALF_LEN, ROD_RADIUS, backproject, fit_cylinder, fit_cylinders_sequential, normals_from_depth, pose_quat_xyzw, transform_points
+from .rod_fit import ROD_HALF_LEN, ROD_RADIUS, backproject, refine_pose, fit_cylinder, fit_cylinders_sequential, normals_from_depth, pose_quat_xyzw, transform_points
 from .segment import BinRegion, DepthClusterSegmenter, YoloSegmenter
 
 
@@ -72,6 +72,7 @@ class PerceptionNode(Node):
                  rgb_topic='', camera_frame='', world_frame='world', candidates_topic='/perception/rod_candidates',
                  stats_topic='/perception/rod_fit_stats', segmenter='depth', yolo_model='', yolo_conf=0.5,
                  rod_radius_m=ROD_RADIUS, rod_half_len_m=ROD_HALF_LEN,
+                 refine_axis=True, flat_snap_deg=8.0,
                  bin_xy_min=[-0.2, -0.5], bin_xy_max=[0.2, -0.1], bin_floor_z=0.95, floor_margin_m=0.006,
                  min_pixels=60, min_inlier_frac=0.6, max_residual_m=0.0015, inlier_tol_m=0.002, ransac_iters=200,
                  split_above_pixels=600, split_min_inliers=40, split_max_rods=40,
@@ -157,9 +158,23 @@ class PerceptionNode(Node):
                            residual_mm=None if not fit.ok else round(1000 * fit.residual_m, 2),
                            visible_len_mm=round(1000 * fit.visible_len, 1), ends_visible=bool(fit.ends_visible), accepted=False)
                 too_long = fit.visible_len > 2 * half_len + 0.012
-                if fit.ok and judge(fit) and fit.residual_m <= float(self.p['max_residual_m']) and not too_long:
-                    q, _ = pose_quat_xyzw(fit.axis, up_cam)
-                    centre_w = transform_points(T, fit.centre[None])[0]
+                centre_w = transform_points(T, fit.centre[None])[0] if fit.ok else None
+                # two solid rods' axes are >= 2r apart, so a centre within 1.6 r of an accepted one is the same rod
+                # fitted again from the first fit's leftovers (its end face or threads: ~10 mm visible, 1 mm away)
+                dup = fit.ok and any(np.linalg.norm(centre_w - np.array([p.position.x, p.position.y, p.position.z]))
+                                     < 1.6 * float(self.p['rod_radius_m']) for p in out.poses)
+                rec['duplicate'] = bool(dup)
+                if fit.ok and judge(fit) and fit.residual_m <= float(self.p['max_residual_m']) and not too_long and not dup:
+                    axis_cam = fit.axis
+                    if self.p['refine_axis']:
+                        # the cylinder fit's axis is 15-28 deg off on this rod (thread + hex nut, not a cylinder);
+                        # a lying rod's pose comes from fitting its real shape instead
+                        c_cam, axis_cam, ref = refine_pose(pts, fit.centre, fit.axis, T,
+                                                           flat_snap_deg=float(self.p['flat_snap_deg']))
+                        rec['refine'] = ref
+                        if ref['refined']:
+                            centre_w = transform_points(T, c_cam[None])[0]
+                    q, _ = pose_quat_xyzw(axis_cam, up_cam)
                     R = T[:3, :3] @ _quat_to_matrix(q)
                     qw = _matrix_to_quat(R)
                     pose = Pose()

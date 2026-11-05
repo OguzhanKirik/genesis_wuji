@@ -896,6 +896,46 @@ LEVELS[53] = dataclasses.replace(LEVELS[52], name="bin_highest_low_walls",
 # 0.2 --lr 2e-4 fixed: level 52's run went flat from iteration ~100 while the entropy rose 1.7 -> 3.0).
 LEVELS[54] = dataclasses.replace(LEVELS[52], name="bin_highest_ft")
 LEVEL = int(os.environ.get("ADAM_U_RG_LEVEL", "0"))
+# ADAM_U_RG_GAINS=lowcmd: the waist, right arm and right wrist drives at the gains adam-moveit's driver sends the real
+# robot in every /lowcmd (genesis_driver/config/joint_pd_gains.yaml, N.m/rad and N.m.s/rad, copied from the vendor
+# URDF's <dynamics>), instead of the training's own (waist 20000/600, arm 1500/60, wrist 500/20). Found 2026-11-04:
+# the trained policy pushes rods through the ROS path, whose arm is ~5x and waist ~11x softer. Unset = as trained.
+GAINS = os.environ.get("ADAM_U_RG_GAINS", "")
+LOWCMD_GAINS = {   # joint: (kp, kd), all 19 body joints of the /lowcmd wire
+    "waistRoll": (1837.992, 30.6332), "waistPitch": (1837.992, 30.6332), "waistYaw": (1837.992, 30.6332),
+    "neckYaw": (260.796, 5.21592), "neckPitch": (260.796, 5.21592),
+    **{f"{j}_{side}": g for side in ("Left", "Right") for j, g in (
+        ("shoulderPitch", (294.0792, 9.80264)), ("shoulderRoll", (294.0792, 9.80264)),
+        ("shoulderYaw", (312.9552, 10.43184)), ("elbow", (312.9552, 10.43184)),
+        ("wristYaw", (312.9552, 10.43184)), ("wristPitch", (312.9552, 10.43184)),
+        ("wristRoll", (312.9552, 10.43184)))},
+}
+assert len(LOWCMD_GAINS) == 19
+# ADAM_U_RG_GAIN_SCALE="lo,hi": the per-episode gain randomisation (fingers, right arm and wrist, and with
+# ADAM_U_RG_GAINS=lowcmd the waist) instead of the level's 0.8-1.2. The real arm's stiffness is not verified (the
+# /lowcmd kp units and the vendor's intent are unconfirmed) and the Wuji hand's internal finger gains are not
+# published: a wide range trains for the whole plausible span.
+GAIN_SCALE = tuple(float(v) for v in os.environ["ADAM_U_RG_GAIN_SCALE"].split(",")) \
+    if os.environ.get("ADAM_U_RG_GAIN_SCALE") else None
+assert GAIN_SCALE is None or (len(GAIN_SCALE) == 2 and 0.0 < GAIN_SCALE[0] <= GAIN_SCALE[1]), GAIN_SCALE
+# ADAM_U_RG_DEPLOY_PERC=1: the rod estimate as the deployed camera delivers it through adam-moveit (bench, 2026-11-04):
+# a new fit only every DEPLOY_PERC_PERIOD steps (the shape fit runs at 3-4 Hz against the 30 Hz policy), and none at all
+# while a fingertip is within DEPLOY_PERC_OCCLUDE_M of the rod before the latch (the hand hides it from the head camera:
+# lost at 60-75 mm in the bench runs). After the latch the estimate follows the rod, as the policy node's wrist-attached
+# pose does. On top of the level's bias, noise, latency and dropout.
+DEPLOY_PERC = os.environ.get("ADAM_U_RG_DEPLOY_PERC", "0") == "1"
+DEPLOY_PERC_PERIOD = int(os.environ.get("ADAM_U_RG_DEPLOY_PERC_PERIOD", "8"))
+DEPLOY_PERC_OCCLUDE_M = float(os.environ.get("ADAM_U_RG_DEPLOY_PERC_OCCLUDE_M", "0.07"))
+# ADAM_U_RG_DEPLOY_PERC_OCCLUDE_RAMP="start_m,steps": a curriculum on the blind zone. The occlusion radius grows
+# linearly from start_m to DEPLOY_PERC_OCCLUDE_M over the first `steps` env steps of this process (24 per PPO
+# iteration), then stays there. Round 2 at a fixed 7 cm plateaued at ~0.42 train success (2026-11-05).
+_ramp = os.environ.get("ADAM_U_RG_DEPLOY_PERC_OCCLUDE_RAMP", "")
+DEPLOY_PERC_OCCLUDE_RAMP = (float(_ramp.split(",")[0]), int(_ramp.split(",")[1])) if _ramp else None
+# ADAM_U_RG_PRIV_CRITIC=1: an asymmetric critic. A "critic" observation group (the true rod pose, the true fingertip
+# distances, the estimate's error and whether this step's estimate is a fresh fit) that only the critic reads (the runner
+# config maps it when the same variable is set). The actor's 74 inputs are unchanged, so the exported policy is too.
+# Resume from a checkpoint widened by tools/widen_critic.py (zero weights on the new inputs: the critic starts as before).
+PRIV_CRITIC = os.environ.get("ADAM_U_RG_PRIV_CRITIC", "0") == "1"
 if LEVEL not in LEVELS:
     raise ValueError(f"ADAM_U_RG_LEVEL must be one of {sorted(LEVELS)}, got {LEVEL}")
 if LEVELS[LEVEL].fill.active:
@@ -1636,6 +1676,20 @@ def _est_bolt_body(env) -> tuple[torch.Tensor, torch.Tensor]:
         drop = (torch.rand(n, device=d) < perc.dropout) & (b["hist_n"] > 1)
         p = torch.where(drop.unsqueeze(1), b["est_pos"], p)
         q = torch.where(drop.unsqueeze(1), b["est_quat"], q)
+    if DEPLOY_PERC:
+        stale = (env.episode_length_buf % DEPLOY_PERC_PERIOD) != 0
+        tp, tq = _bolt_true(env)
+        occl_m = DEPLOY_PERC_OCCLUDE_M
+        if DEPLOY_PERC_OCCLUDE_RAMP is not None:
+            r0, n_ = DEPLOY_PERC_OCCLUDE_RAMP
+            occl_m = r0 + (DEPLOY_PERC_OCCLUDE_M - r0) * min(1.0, int(env.common_step_counter) / max(1, n_))
+            if int(env.common_step_counter) % 2400 == 0:
+                print(f"[reach_grasp] blind zone {1000 * occl_m:.1f} mm at env step {int(env.common_step_counter)}", flush=True)
+        occluded = (_fingertip_distances(env, tp, tq).min(dim=1).values < occl_m) & ~b["latched"]
+        hold = (stale | occluded) & (b["hist_n"] > 1)
+        p = torch.where(hold.unsqueeze(1), b["est_pos"], p)
+        q = torch.where(hold.unsqueeze(1), b["est_quat"], q)
+        b["est_fresh"] = (~hold).float()
     p, q = _to_grasp_point(env, p, q)
     b["est_pos"], b["est_quat"] = p, q
     return p, q
@@ -1685,6 +1739,41 @@ def bolt_rot_in_wrist(env) -> torch.Tensor:
 
 def fingertip_distances_est(env) -> torch.Tensor:
     return _fingertip_distances(env, *_est_bolt(env))
+
+
+def _true_grasp(env):
+    _est_bolt(env)                                   # the estimate first: it fills est_fresh this step
+    return _to_grasp_point(env, *_bolt_true(env))
+
+
+def priv_bolt_pos_in_wrist(env) -> torch.Tensor:
+    """Critic only: the TRUE rod (grasp point) in the wrist frame."""
+    pos, quat = _wrist_pose(env)
+    return math_utils.quat_apply_inverse(quat, _true_grasp(env)[0] - pos)
+
+
+def priv_bolt_rot_in_wrist(env) -> torch.Tensor:
+    _, quat = _wrist_pose(env)
+    rel = math_utils.quat_mul(math_utils.quat_inv(quat), _true_grasp(env)[1])
+    R = math_utils.matrix_from_quat(rel)
+    return torch.cat([R[:, :, 0], R[:, :, 1]], dim=1)
+
+
+def priv_fingertip_distances(env) -> torch.Tensor:
+    return _fingertip_distances(env, *_bolt_true(env))
+
+
+def priv_est_error(env) -> torch.Tensor:
+    """Critic only: true minus estimated grasp point, in the wrist frame (how far the rod moved unseen)."""
+    _, quat = _wrist_pose(env)
+    est, _ = _est_bolt(env)
+    return math_utils.quat_apply_inverse(quat, _true_grasp(env)[0] - est)
+
+
+def priv_est_fresh(env) -> torch.Tensor:
+    b = _rg(env)
+    f = b.get("est_fresh")
+    return torch.ones(env.num_envs, 1, device=env.device) if f is None else f.view(-1, 1)
 
 
 def _grip_torque(env) -> torch.Tensor:
@@ -3464,7 +3553,21 @@ class ObservationsCfg:
         """Level 36+: the 74 above plus the heap map (appended, so every earlier index is unchanged)."""
         heap_map = ObsTerm(func=heap_map_obs)                          # 8   (estimated pose, true neighbours)
 
+    @configclass
+    class CriticPrivCfg(ObsGroup):
+        """ADAM_U_RG_PRIV_CRITIC: appended to the critic's input after the policy group (16)."""
+        true_bolt_pos = ObsTerm(func=priv_bolt_pos_in_wrist)          # 3
+        true_bolt_rot = ObsTerm(func=priv_bolt_rot_in_wrist)          # 6
+        true_tip_dist = ObsTerm(func=priv_fingertip_distances)        # 3
+        est_error = ObsTerm(func=priv_est_error)                      # 3
+        est_fresh = ObsTerm(func=priv_est_fresh)                      # 1
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
     policy: PolicyCfg = PolicyCfg()
+    critic: CriticPrivCfg | None = None
 
 
 @configclass
@@ -3599,6 +3702,9 @@ class WujiReachGraspEnvCfg(ManagerBasedRLEnvCfg):
         lvl = LEVELS[self.actions.pipeline.level]
         if lvl.heap_map:
             self.observations.policy = ObservationsCfg.PolicyHeapCfg()
+        if PRIV_CRITIC:
+            self.observations.critic = ObservationsCfg.CriticPrivCfg()
+            print("[reach_grasp] ADAM_U_RG_PRIV_CRITIC: the critic also reads the true rod pose (16 inputs)", flush=True)
         if lvl.bolt_collider != "hull":
             self.scene.object.spawn.usd_path = bolt_asset(lvl.bolt_collider)
         # One step MORE than the phase machine ever needs, so `time_out` never
@@ -3620,6 +3726,25 @@ class WujiReachGraspEnvCfg(ManagerBasedRLEnvCfg):
         )
         if hasattr(self.sim, "disable_contact_processing"):
             self.sim.disable_contact_processing = False
+        if GAINS == "lowcmd":
+            import copy
+            self.scene.robot = copy.deepcopy(self.scene.robot)
+            acts = self.scene.robot.actuators
+            import re as _re
+            done = []
+            for key, act in acts.items():
+                names = [j for j in LOWCMD_GAINS if any(_re.fullmatch(e, j) for e in act.joint_names_expr)]
+                if names:
+                    act.stiffness = {j: LOWCMD_GAINS[j][0] for j in names}
+                    act.damping = {j: LOWCMD_GAINS[j][1] for j in names}
+                    done += names
+            assert sorted(done) == sorted(LOWCMD_GAINS), sorted(set(LOWCMD_GAINS) - set(done))
+            print(f"[reach_grasp] ADAM_U_RG_GAINS=lowcmd: {len(done)} body joints at the /lowcmd gains", flush=True)
+        elif GAINS:
+            raise ValueError(f"ADAM_U_RG_GAINS={GAINS!r}: only 'lowcmd' (or unset)")
+        if DEPLOY_PERC:
+            print(f"[reach_grasp] ADAM_U_RG_DEPLOY_PERC: a fit every {DEPLOY_PERC_PERIOD} steps, frozen while a fingertip is "
+                  f"within {1000 * DEPLOY_PERC_OCCLUDE_M:.0f} mm before the latch", flush=True)
 
         lvl = LEVELS[self.actions.pipeline.level]
         if lvl.clutter.active:
@@ -3663,11 +3788,16 @@ class WujiReachGraspEnvCfg(ManagerBasedRLEnvCfg):
                         "static_friction_range": tuple(0.9 * s for s in lvl.physics.friction_scale),
                         "dynamic_friction_range": tuple(0.9 * s for s in lvl.physics.friction_scale),
                         "restitution_range": (0.0, 0.0), "num_buckets": 64})
+            gscale = GAIN_SCALE or lvl.physics.gain_scale
+            gjoints = SYNERGY_JOINTS + (list(RIGHT_ARM) if lvl.arm_gains else []) \
+                + (["waistRoll", "waistPitch", "waistYaw"] if GAINS == "lowcmd" else [])
             self.events.finger_gains = EventTerm(
                 func=mdp.randomize_actuator_gains, mode="reset",
-                params={"asset_cfg": SceneEntityCfg("robot", joint_names=SYNERGY_JOINTS + (list(RIGHT_ARM) if lvl.arm_gains else [])),
-                        "stiffness_distribution_params": lvl.physics.gain_scale,
-                        "damping_distribution_params": lvl.physics.gain_scale, "operation": "scale"})
+                params={"asset_cfg": SceneEntityCfg("robot", joint_names=gjoints),
+                        "stiffness_distribution_params": gscale,
+                        "damping_distribution_params": gscale, "operation": "scale"})
+            if GAIN_SCALE or GAINS:
+                print(f"[reach_grasp] gain randomisation x{gscale[0]}-{gscale[1]} on {len(gjoints)} joints", flush=True)
 
         self.viewer.eye = (BOLT_XY[0] + 0.45, BOLT_XY[1] - 0.45, TABLE_TOP + 0.40)
         self.viewer.lookat = (BOLT_XY[0], BOLT_XY[1], TABLE_TOP + 0.03)

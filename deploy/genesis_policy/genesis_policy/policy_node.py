@@ -6,10 +6,15 @@ right hand controllers' topics, behind the safety wrapper.
 
 Nothing moves until the dead-man is satisfied: `~/enable` (std_srvs/SetBool)
 set to true AND a heartbeat on `~/heartbeat` (std_msgs/Empty) fresher than
-heartbeat_timeout_s. Losing either, a stale joint state, a stale rod pose,
-hand effort over the threshold, the measured wrist outside the fence or a
-wrist step above the cap aborts: one hold trajectory at the measured pose
-goes out, then nothing until the next enable.
+heartbeat_timeout_s. Losing either, a stale joint state, a rod pose lost for
+longer than the hold, hand effort over the threshold, the measured wrist
+outside the fence or a wrist step above the cap aborts: one hold trajectory
+at the measured pose goes out, then nothing until the next enable.
+
+The camera loses the rod once the hand covers it, so the runtime steps on a
+tracked pose (runtime.RodTracker): the fit while it is fresh, the last pose
+for rod_hold_s without one, and after the latch a pose riding on the wrist,
+unless a fresh fit shows the rod still on the table (left behind).
 
 The node goes through ros2_control only: the JTC replaces its trajectory on
 each message and the hardware plugins' watchdog, slew cap and clamp stay in
@@ -23,7 +28,7 @@ import numpy as np
 import rclpy
 import yaml
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseArray, PoseStamped
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
@@ -36,7 +41,7 @@ from .actor import OnnxActor
 from .cell import load_workcell
 from .level import N_HAND, load as load_level
 from .model import RobotModel, urdf_string
-from .runtime import JointStates, RodPose, Runtime, lift_dir_from_rod
+from .runtime import JointStates, RodPose, RodTracker, Runtime, lift_dir_from_rod
 
 TRUTHY = ('true', '1', 'yes')
 
@@ -123,6 +128,7 @@ class PolicyNode(Node):
         self.dry_run = p['dry_run']
         self.state_stale_s = p['state_stale_s']
         self.perception_stale_s = p['perception_stale_s']
+        self.tracker = RodTracker(p['perception_stale_s'], p['rod_hold_s'], p['rod_left_radius_m'])
         self.heartbeat_timeout_s = p['heartbeat_timeout_s']
         self.hand_effort_abort = p['hand_effort_abort']
         self.fence_lo = np.array([p['fence.x_min'], p['fence.y_min'], p['fence.z_min']])
@@ -193,6 +199,9 @@ class PolicyNode(Node):
         best_effort = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(JointState, p['joint_states_topic'], self._on_joint_states, 10)
         self.create_subscription(PoseStamped, p['bolt_pose_topic'], self._on_bolt_pose, 10)
+        # every visible rod: whether the grasped rod stayed on the table, which the selector's choice cannot say
+        self.create_subscription(PoseArray, p['candidates_topic'], self._on_candidates, 10)
+        self.confirm_frames = int(p['confirm_frames'])
         self.create_subscription(Empty, '~/heartbeat', self._on_heartbeat, best_effort)
         self.create_service(SetBool, '~/enable', self._on_enable)
         self.status_pub = self.create_publisher(String, '~/status', 10)
@@ -225,6 +234,10 @@ class PolicyNode(Node):
             'dry_run': False,
             'state_stale_s': 0.5,
             'perception_stale_s': 0.5,
+            'rod_hold_s': 10.0,          # longer than a grasp phase with its retries: the fingers hide the rod before the latch
+            'rod_left_radius_m': 0.03,
+            'candidates_topic': '/perception/rod_candidates',
+            'confirm_frames': 3,
             'heartbeat_timeout_s': 0.5,
             'hand_effort_abort': 1.5,
             'fence.x_min': 0.25, 'fence.x_max': 0.85,
@@ -297,6 +310,25 @@ class PolicyNode(Node):
         self.rod = RodPose(np.array([p.x, p.y, p.z]), R)
         self.rod_time = self._now()
 
+    def _on_candidates(self, msg):
+        if msg.header.frame_id and msg.header.frame_id != self.world_frame:
+            return
+        poses = []
+        for q in msg.poses:
+            try:
+                R = so3.from_quat_xyzw((q.orientation.x, q.orientation.y, q.orientation.z, q.orientation.w))
+            except ValueError:
+                continue
+            poses.append(RodPose(np.array([q.position.x, q.position.y, q.position.z]), R))
+        self.tracker.observe_candidates(poses, self._now())
+
+    def _success_confirmed(self, info):
+        """The runtime's success, unless it rests on a pose riding on the wrist that perception never backed: after
+        the latch, at least `confirm_frames` candidate frames must show no rod where it rested."""
+        if not info.get('success', False):
+            return False
+        return self.tracker.rel is None or self.tracker.clear_frames >= self.confirm_frames
+
     def _on_heartbeat(self, _msg):
         self.heartbeat_time = self._now()
 
@@ -307,6 +339,7 @@ class PolicyNode(Node):
             self.abort_reason = ''
             self.prev_arm_targets = None
             self.runtime.end_episode()         # a fresh episode on the next tick
+            self.tracker.reset()
             response.success = True
             response.message = 'enabled; streaming starts with the next fresh heartbeat'
             self.get_logger().info(response.message)
@@ -321,7 +354,11 @@ class PolicyNode(Node):
 
     def _hold(self, reason, error=True):
         """Publish one hold at the measured pose and stop."""
-        (self.get_logger().error if error else self.get_logger().info)(f'HOLD: {reason}')
+        # two call sites: rclpy raises 'Logger severity cannot be changed between calls' if one site logs at two levels
+        if error:
+            self.get_logger().error(f'HOLD: {reason}')
+        else:
+            self.get_logger().info(f'HOLD: {reason}')
         self.aborted = error
         self.abort_reason = reason
         if self.dry_run or self.js is None:
@@ -334,7 +371,8 @@ class PolicyNode(Node):
         """The reasons not to step this tick, in the order they are checked."""
         if self.js is None or now - self.js_time > self.state_stale_s:
             return f'joint state stale ({now - self.js_time:.2f} s > {self.state_stale_s} s)'
-        if self.rod is None or now - self.rod_time > self.perception_stale_s:
+        if not self.runtime.started and (self.rod is None or now - self.rod_time > self.perception_stale_s):
+            # an episode starts on a fresh fit; once running, the tracker bridges the hand covering the rod
             return f'rod pose stale ({now - self.rod_time:.2f} s > {self.perception_stale_s} s)'
         if now - self.heartbeat_time > self.heartbeat_timeout_s:
             return f'no heartbeat for {now - self.heartbeat_time:.2f} s (> {self.heartbeat_timeout_s} s)'
@@ -367,7 +405,14 @@ class PolicyNode(Node):
         if not self.runtime.started:
             # the episode's approach / lift axis from the rod estimate at the start (a leaning rod: its up-normal)
             lift_dir = lift_dir_from_rod(self.rod, self.level.phase.roll_cap, *self.tilt_roll)
-        arm, hand, info = self.runtime.step(self.js, self.rod, now, lift_dir=lift_dir)
+        wrist_p, wrist_R = self._wrist_now()
+        rod = self.tracker.update(self.rod, self.rod_time, now, wrist_p, wrist_R,
+                                  self.runtime.started and self.runtime.latched)
+        if rod is None:
+            self._hold(f'rod pose lost for more than rod_hold_s ({self.tracker.hold_s} s) before the latch')
+            self._status(force=True)
+            return
+        arm, hand, info = self.runtime.step(self.js, rod, now, lift_dir=lift_dir)
         self.last_info = info
 
         # the fence: the measured wrist must be inside, the commanded target too
@@ -385,7 +430,9 @@ class PolicyNode(Node):
         # by FK between the previous commanded targets and the new ones. A
         # larger step is scaled down to the cap; if that still exceeds it (the
         # scaling is linear in joint space) the tick aborts.
-        prev = self.prev_arm_targets if self.prev_arm_targets is not None else \
+        # on a re-seed (the latch, a retry) the runtime restarts its command at the MEASURED pose: the jump from the
+        # previous command back to where the arm is is a hold, not a motion, so the cap counts from the measured pose
+        prev = self.prev_arm_targets if (self.prev_arm_targets is not None and not info.get('reseed', False)) else \
             np.array([self.js.position[j] for j in self.arm_joints])
         cap = max(self.level.effective_translation * math.sqrt(3.0),
                   self.level.phase.lift_height_m / max(self.level.phase.lift_steps - self.level.phase.lift_slow_steps, 1))
@@ -410,6 +457,12 @@ class PolicyNode(Node):
             self.streamer.send(arm, hand)
         self._status()
 
+    def _wrist_now(self):
+        q = self.model.configuration(self.js.position)
+        self.model.forward(q)
+        p, R = self.model.wrist()
+        return p.copy(), R.copy()
+
     def _wrist_travel(self, arm_a, arm_b):
         q = self.model.configuration(self.js.position)
         q[self.model.arm_q] = arm_a
@@ -430,7 +483,11 @@ class PolicyNode(Node):
             'dry_run': self.dry_run, 'started': self.runtime.started, 'published': self.streamer.sent,
             'step': int(info.get('step', -1)), 'phase': info.get('phase', ''),
             'attempts': int(info.get('attempts', 0)), 'latched': bool(info.get('latched', False)),
-            'done': bool(info.get('done', False)), 'success': bool(info.get('success', False)),
+            'done': bool(info.get('done', False)), 'success': self._success_confirmed(info),
+            'success_unconfirmed': bool(info.get('success', False)),
+            'clear_frames': int(self.tracker.clear_frames),
+            'rod': self.tracker.source,
+            'latch': info.get('latch'),
             'track_err_mm': round(float(info.get('track_err', 0.0)) * 1000.0, 2),
             'ik_failed': bool(info.get('ik_failed', False)),
             'wrist': [round(float(v), 4) for v in info.get('wrist_p', [])],

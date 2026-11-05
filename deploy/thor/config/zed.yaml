@@ -1,0 +1,17 @@
+# zed_source parameters. mount_xyz / mount_rpy: where the camera's optical frame sits in the world frame for the
+# BENCH test (camera looking straight down from 0.7 m above the table origin: rpy pi,0,0 turns the optical z
+# down). On the robot set publish_tf: false and let the robot's TF tree (hand-eye calibration) place the camera.
+zed_source:
+  ros__parameters:
+    camera_frame: zed_left_optical
+    world_frame: world
+    publish_tf: true
+    mount_xyz: [0.0, 0.0, 0.70]
+    mount_rpy: [3.141592653589793, 0.0, 0.0]
+    resolution: HD720
+    fps: 30
+    depth_mode: NEURAL_LIGHT
+    depth_min_m: 0.2
+    depth_max_m: 3.0
+    rate_hz: 15.0
+    publish_rgb: true

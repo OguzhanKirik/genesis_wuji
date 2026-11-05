@@ -10,6 +10,7 @@ between the two environments**. To watch a policy trained on the 5.1 side, use
 the TorchScript export instead -- see scripts/play.py.
 """
 
+import os
 from isaaclab.utils.configclass import configclass
 from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
@@ -190,6 +191,8 @@ class RslRlWujiReachGraspPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 50
     experiment_name = "adam_u30_wuji_reach_grasp"
     obs_groups = {"policy": ["policy"], "actor": ["policy"], "critic": ["policy"]}
+    if os.environ.get("ADAM_U_RG_PRIV_CRITIC", "0") == "1":   # asymmetric critic (env_cfg.CriticPrivCfg)
+        obs_groups = {"policy": ["policy"], "actor": ["policy"], "critic": ["policy", "critic"]}
 
     actor = RslRlMLPModelCfg(
         hidden_dims=[256, 256, 128],

@@ -54,3 +54,27 @@ services:
       - robot
     command: ["sleep", "infinity"]
     restart: unless-stopped
+
+  # The ZED camera source (deploy/thor/zed): depth + camera info + colour on the RealSense-style topics
+  # config/perception.yaml reads, and a static world->camera TF for the bench mount. Built on the Thor:
+  #   docker build -t genesis-rl-zed:local zed/
+  zed:
+    image: genesis-rl-zed:${ZED_TAG:-local}
+    container_name: genesis_rl_zed
+    network_mode: host
+    ipc: host
+    privileged: true                  # the ZED's USB video interface and the GPU
+    runtime: nvidia
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:?set ROS_DOMAIN_ID in .env}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - /dev:/dev
+      - zed_resources:/usr/local/zed/resources   # neural depth models, downloaded on first use
+      - ./zed_settings:/usr/local/zed/settings   # the camera's factory calibration (SN<serial>.conf), kept on the host
+      - ./config:/config:ro
+    command: ["python3", "/opt/zed_source.py", "--ros-args", "--params-file", "/config/zed.yaml"]
+
+volumes:
+  zed_resources:
